@@ -8,7 +8,7 @@ import { HighlightItem } from '../../types'
 import workspace from '../../workspace'
 const logger = require('../../util/logger')('semanticTokens-buffer')
 
-const SEMANTIC_HLGROUP_PREFIX = 'CocSem_'
+const SEMANTIC_HLGROUP_PREFIX = 'TS'
 /**
  * Relative highlight
  */
