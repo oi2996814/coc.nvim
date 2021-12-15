@@ -17,6 +17,7 @@ interface RelativeHighlight {
   deltaLine: number
   deltaStartCharacter: number
   length: number
+  modifiers: string[]
 }
 
 export interface SemanticTokensConfig {
@@ -146,7 +147,7 @@ export default class SemanticTokensBuffer implements SyncItem {
   }
 
   private calculateHighlightUpdates(prev: HighlightItem[], curr: HighlightItem[]): { highlights: HighlightItem[], lines: Set<number> } {
-    const stringCompare = Intl.Collator("en").compare
+    const stringCompare = Intl.Collator('en').compare
     function compare(a: HighlightItem, b: HighlightItem): number {
       return (
         a.lnum - b.lnum ||
@@ -251,12 +252,13 @@ export default class SemanticTokensBuffer implements SyncItem {
       const deltaStartCharacter = tokens[i + 1]
       const length = tokens[i + 2]
       const tokenType = tokens[i + 3]
-      // const tokenModifiers = legend.tokenModifiers.filter((_, m) => tokens[i + 4] & (1 << m))
+      const modifiers = legend.tokenModifiers.filter((_, m) => tokens[i + 4] & (1 << m)).map(m => SEMANTIC_HLGROUP_PREFIX + m)
       const group = SEMANTIC_HLGROUP_PREFIX + legend.tokenTypes[tokenType]
       relatives.push({
         group,
         deltaLine,
         deltaStartCharacter,
+        modifiers,
         length
       })
     }
@@ -268,6 +270,7 @@ export default class SemanticTokensBuffer implements SyncItem {
       group,
       deltaLine,
       deltaStartCharacter,
+      modifiers,
       length
     } of relatives) {
       const lnum = currentLine + deltaLine
@@ -281,6 +284,7 @@ export default class SemanticTokensBuffer implements SyncItem {
         colStart,
         colEnd
       })
+      modifiers.forEach(m => res.push({ hlGroup: m, lnum, colStart, colEnd }))
     }
     this._highlights = res
     return res
