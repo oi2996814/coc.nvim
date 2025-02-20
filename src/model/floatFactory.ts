@@ -1,14 +1,16 @@
-import { Buffer, Neovim, Window } from '@chemzqm/neovim'
-import debounce from 'debounce'
-import { Disposable } from 'vscode-languageserver-protocol'
+'use strict'
+import { Buffer, Neovim, Window } from '../neovim'
+import { debounce } from '../util/node'
 import events, { BufEvents } from '../events'
-import { Documentation, parseDocuments } from '../markdown'
-import { disposeAll } from '../util'
+import { parseDocuments } from '../markdown'
+import { Documentation, FloatConfig } from '../types'
+import { disposeAll, getConditionValue } from '../util'
+import { isFalsyOrEmpty } from '../util/array'
 import { Mutex } from '../util/mutex'
 import { equals } from '../util/object'
-import { FloatConfig } from '../types'
-const isVim = process.env.VIM_NODE_RPC == '1'
-const logger = require('../util/logger')('model-float')
+import { Disposable } from '../util/protocol'
+import { isVim } from '../util/constants'
+const debounceTime = getConditionValue(100, 10)
 
 export interface WindowConfig {
   width: number
@@ -24,29 +26,25 @@ export interface WindowConfig {
   close?: number
 }
 
-export interface FloatWinConfig {
-  maxHeight?: number
-  maxWidth?: number
+export interface FloatWinConfig extends FloatConfig {
+  breaks?: boolean
   preferTop?: boolean
   autoHide?: boolean
   offsetX?: number
-  title?: string
-  border?: number[]
   cursorline?: boolean
-  close?: boolean
-  highlight?: string
-  borderhighlight?: string
   modes?: string[]
-  shadow?: boolean
-  winblend?: number
-  focusable?: boolean
   excludeImages?: boolean
+  position?: "fixed" | "auto";
+  top?: number;
+  bottom?: number;
+  left?: number;
+  right?: number;
 }
 
 /**
  * Float window/popup factory for create float/popup around current cursor.
  */
-export default class FloatFactory implements Disposable {
+export default class FloatFactoryImpl implements Disposable {
   private winid = 0
   private _bufnr = 0
   private closeTs: number
@@ -54,9 +52,9 @@ export default class FloatFactory implements Disposable {
   private mutex: Mutex = new Mutex()
   private disposables: Disposable[] = []
   private cursor: [number, number]
-  private onCursorMoved: ((bufnr: number, cursor: [number, number]) => void) & { clear(): void }
+  private onCursorMoved: Function & { clear(): void }
   constructor(private nvim: Neovim) {
-    this.onCursorMoved = debounce(this._onCursorMoved.bind(this), 100)
+    this.onCursorMoved = debounce(this._onCursorMoved.bind(this), debounceTime)
   }
 
   private bindEvents(autoHide: boolean, alignTop: boolean): void {
@@ -93,7 +91,7 @@ export default class FloatFactory implements Disposable {
       // cursor not moved
       return
     }
-    if (autoHide || bufnr != this.targetBufnr || !events.insertMode) {
+    if (bufnr != this.targetBufnr || !events.insertMode || autoHide) {
       this.close()
       return
     }
@@ -101,7 +99,6 @@ export default class FloatFactory implements Disposable {
 
   /**
    * Create float window/popup at cursor position.
-   *
    * @deprecated use show method instead
    */
   public async create(docs: Documentation[], _allowSelection = false, offsetX = 0): Promise<void> {
@@ -110,22 +107,10 @@ export default class FloatFactory implements Disposable {
     })
   }
 
-  public applyFloatConfig(conf: FloatWinConfig, opts: FloatConfig): FloatWinConfig {
-    for (let key of Object.keys(opts)) {
-      if (key == 'border') {
-        if (opts.border) conf.border = [1, 1, 1, 1]
-        continue
-      }
-      conf[key] = opts[key]
-    }
-    return conf
-  }
-
   /**
    * Show documentations in float window/popup around cursor.
    * Window and buffer are reused when possible.
    * Window is closed automatically on change buffer, InsertEnter, CursorMoved and CursorMovedI.
-   *
    * @param docs List of documentations.
    * @param config Configuration for floating window/popup.
    */
@@ -147,16 +132,17 @@ export default class FloatFactory implements Disposable {
 
   private async createPopup(docs: Documentation[], opts: FloatWinConfig, timestamp: number): Promise<void> {
     docs = docs.filter(o => o.content.trim().length > 0)
-    let { lines, codes, highlights } = parseDocuments(docs)
+    let { lines, codes, highlights } = parseDocuments(docs, { excludeImages: opts.excludeImages, breaks: opts.breaks })
     let config: any = {
+      codes,
+      highlights,
       pumAlignTop: events.pumAlignTop,
       preferTop: typeof opts.preferTop === 'boolean' ? opts.preferTop : false,
       offsetX: opts.offsetX || 0,
       title: opts.title || '',
       close: opts.close ? 1 : 0,
-      codes,
-      highlights,
-      modes: opts.modes || ['n', 'i', 'ic', 's']
+      rounded: opts.rounded ? 1 : 0,
+      modes: opts.modes || ['n', 'i', 'ic', 's'],
     }
     if (!isVim) {
       if (typeof opts.winblend === 'number') config.winblend = opts.winblend
@@ -165,19 +151,26 @@ export default class FloatFactory implements Disposable {
     }
     if (opts.maxHeight) config.maxHeight = opts.maxHeight
     if (opts.maxWidth) config.maxWidth = opts.maxWidth
-    if (opts.border && !opts.border.every(o => o == 0)) {
-      config.border = opts.border
+    if (opts.border === true) {
+      config.border = [1, 1, 1, 1]
+    } else if (Array.isArray(opts.border) && !opts.border.every(o => o == 0)) {
+      config.border = opts.border.slice(0, 4)
+      config.rounded = opts.rounded ? 1 : 0
     }
-    if (opts.title && !config.border) config.border = [1, 1, 1, 1]
     if (opts.highlight) config.highlight = opts.highlight
-    if (opts.borderhighlight) config.borderhighlight = [opts.borderhighlight]
+    if (opts.borderhighlight) config.borderhighlight = opts.borderhighlight
     if (opts.cursorline) config.cursorline = 1
-    let autoHide = opts.autoHide == false ? false : true
+    if (opts.position) config.relative = opts.position === "fixed" ? config.relative = "editor" : "cursor"
+    if (typeof opts.top === 'number' && opts.top >= 0) config.top = opts.top
+    if (typeof opts.left === 'number' && opts.left >= 0) config.left = opts.left
+    if (typeof opts.bottom === 'number' && opts.bottom >= 0) config.bottom = opts.bottom
+    if (typeof opts.right === 'number' && opts.right >= 0) config.right = opts.right
+    let autoHide = opts.autoHide === false ? false : true
     if (autoHide) config.autohide = 1
     this.unbind()
-    let arr = await this.nvim.call('coc#float#create_cursor_float', [this.winid, this._bufnr, lines, config])
+    let arr = await this.nvim.call('coc#dialog#create_cursor_float', [this.winid, this._bufnr, lines, config]) as [number, [number, number], number, number, number]
     this.nvim.redrawVim()
-    if (!arr || arr.length == 0 || this.closeTs > timestamp) {
+    if (isFalsyOrEmpty(arr) || this.closeTs > timestamp) {
       let winid = arr && arr.length > 0 ? arr[2] : this.winid
       if (winid) {
         this.winid = 0
@@ -186,7 +179,7 @@ export default class FloatFactory implements Disposable {
       }
       return
     }
-    let [targetBufnr, cursor, winid, bufnr, alignTop] = arr as [number, [number, number], number, number, number]
+    let [targetBufnr, cursor, winid, bufnr, alignTop] = arr
     this.winid = winid
     this._bufnr = bufnr
     this.targetBufnr = targetBufnr
@@ -232,6 +225,7 @@ export default class FloatFactory implements Disposable {
 
   public dispose(): void {
     this.cursor = undefined
+    this.onCursorMoved.clear()
     this.close()
   }
 }

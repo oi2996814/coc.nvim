@@ -1,34 +1,35 @@
-import { CancellationToken, Disposable, DocumentSelector, Location, Position } from 'vscode-languageserver-protocol'
-import { TextDocument } from 'vscode-languageserver-textdocument'
-import { ImplementationProvider } from './index'
-import Manager, { ProviderItem } from './manager'
+'use strict'
 import { v4 as uuid } from 'uuid'
+import { TextDocument } from 'vscode-languageserver-textdocument'
+import { Position } from 'vscode-languageserver-types'
+import { LocationWithTarget } from '../types'
+import { CancellationToken, Disposable } from '../util/protocol'
+import { ImplementationProvider, DocumentSelector } from './index'
+import Manager from './manager'
 
 export default class ImplementationManager extends Manager<ImplementationProvider> {
 
   public register(selector: DocumentSelector, provider: ImplementationProvider): Disposable {
-    let item: ProviderItem<ImplementationProvider> = {
+    return this.addProvider({
       id: uuid(),
       selector,
       provider
-    }
-    this.providers.add(item)
-    return Disposable.create(() => {
-      this.providers.delete(item)
     })
   }
 
-  public async provideReferences(
+  public async provideImplementations(
     document: TextDocument,
     position: Position,
     token: CancellationToken
-  ): Promise<Location[] | null> {
-    let providers = this.getProviders(document)
-    if (!providers.length) return null
-    let arr = await Promise.all(providers.map(item => {
-      let { provider } = item
-      return Promise.resolve(provider.provideImplementation(document, position, token))
+  ): Promise<LocationWithTarget[]> {
+    const providers = this.getProviders(document)
+    let locations: LocationWithTarget[] = []
+    const results = await Promise.allSettled(providers.map(item => {
+      return Promise.resolve(item.provider.provideImplementation(document, position, token)).then(location => {
+        this.addLocation(locations, location)
+      })
     }))
-    return this.toLocations(arr)
+    this.handleResults(results, 'provideImplementations')
+    return locations
   }
 }

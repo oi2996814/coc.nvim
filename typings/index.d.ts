@@ -1,709 +1,256 @@
-// vim: set sw=2 ts=2 sts=2 et foldmarker={{,}} foldmethod=marker foldlevel=0 nofen:
 /******************************************************************
 MIT License http://www.opensource.org/licenses/mit-license.php
 Author Qiming Zhao <chemzqm@gmail> (https://github.com/chemzqm)
 *******************************************************************/
 
 /// <reference types="node" />
-import cp from 'child_process'
 
 declare module 'coc.nvim' {
-  // Language server protocol interfaces {{
-  export interface Thenable<T> {
-    then<TResult>(onfulfilled?: (value: T) => TResult | Thenable<TResult>, onrejected?: (reason: any) => TResult | Thenable<TResult>): Thenable<TResult>
-    // eslint-disable-next-line @typescript-eslint/unified-signatures
-    then<TResult>(onfulfilled?: (value: T) => TResult | Thenable<TResult>, onrejected?: (reason: any) => void): Thenable<TResult>
-  }
+  import cp from 'child_process'
+  import { URL } from 'url'
 
-  export interface Disposable {
-    /**
-     * Dispose this object.
-     */
-    dispose(): void
-  }
-
-  export namespace Disposable {
-    function create(func: () => void): Disposable
-  }
+  // language server types {{
   /**
-   * The declaration of a symbol representation as one or many [locations](#Location).
+   * A tagging type for string properties that are actually document URIs.
    */
-  export type Declaration = Location | Location[]
+  export type DocumentUri = string
+  export namespace DocumentUri {
+    function is(value: any): value is DocumentUri
+  }
+
   /**
-   * Information about where a symbol is declared.
+   * Defines an integer in the range of -2^31 to 2^31 - 1.
+   */
+  export type integer = number
+  export namespace integer {
+    const MIN_VALUE = -2147483648
+    const MAX_VALUE = 2147483647
+    function is(value: any): value is integer
+  }
+  /**
+   * Defines an unsigned integer in the range of 0 to 2^31 - 1.
+   */
+  export type uinteger = number
+  export namespace uinteger {
+    const MIN_VALUE = 0
+    const MAX_VALUE = 2147483647
+    function is(value: any): value is uinteger
+  }
+  /**
+   * Defines a decimal number. Since decimal numbers are very
+   * rare in the language server specification we denote the
+   * exact range with every decimal using the mathematics
+   * interval notations (e.g. [0, 1] denotes all decimals d with
+   * 0 <= d <= 1.
+   */
+  export type decimal = number
+  /**
+   * The LSP any type.
    *
-   * Provides additional metadata over normal [location](#Location) declarations, including the range of
-   * the declaring symbol.
+   * In the current implementation we map LSPAny to any. This is due to the fact
+   * that the TypeScript compilers can't infer string access signatures for
+   * interface correctly (it can though for types). See the following issue for
+   * details: https://github.com/microsoft/TypeScript/issues/15300.
    *
-   * Servers should prefer returning `DeclarationLink` over `Declaration` if supported
-   * by the client.
-   */
-  export type DeclarationLink = LocationLink
-
-  export type ProgressToken = number | string
-
-  export interface WorkDoneProgressBegin {
-    kind: 'begin'
-    /**
-     * Mandatory title of the progress operation. Used to briefly inform about
-     * the kind of operation being performed.
-     *
-     * Examples: "Indexing" or "Linking dependencies".
-     */
-    title: string
-    /**
-     * Controls if a cancel button should show to allow the user to cancel the
-     * long running operation. Clients that don't support cancellation are allowed
-     * to ignore the setting.
-     */
-    cancellable?: boolean
-    /**
-     * Optional, more detailed associated progress message. Contains
-     * complementary information to the `title`.
-     *
-     * Examples: "3/25 files", "project/src/module2", "node_modules/some_dep".
-     * If unset, the previous progress message (if any) is still valid.
-     */
-    message?: string
-    /**
-     * Optional progress percentage to display (value 100 is considered 100%).
-     * If not provided infinite progress is assumed and clients are allowed
-     * to ignore the `percentage` value in subsequent in report notifications.
-     *
-     * The value should be steadily rising. Clients are free to ignore values
-     * that are not following this rule.
-     */
-    percentage?: number
-  }
-
-  export interface WorkDoneProgressReport {
-    kind: 'report'
-    /**
-     * Controls enablement state of a cancel button. This property is only valid if a cancel
-     * button got requested in the `WorkDoneProgressStart` payload.
-     *
-     * Clients that don't support cancellation or don't support control the button's
-     * enablement state are allowed to ignore the setting.
-     */
-    cancellable?: boolean
-    /**
-     * Optional, more detailed associated progress message. Contains
-     * complementary information to the `title`.
-     *
-     * Examples: "3/25 files", "project/src/module2", "node_modules/some_dep".
-     * If unset, the previous progress message (if any) is still valid.
-     */
-    message?: string
-    /**
-     * Optional progress percentage to display (value 100 is considered 100%).
-     * If not provided infinite progress is assumed and clients are allowed
-     * to ignore the `percentage` value in subsequent in report notifications.
-     *
-     * The value should be steadily rising. Clients are free to ignore values
-     * that are not following this rule.
-     */
-    percentage?: number
-  }
-
-  /**
-   * The file event type
-   */
-  export namespace FileChangeType {
-    /**
-     * The file got created.
-     */
-    const Created = 1
-    /**
-     * The file got changed.
-     */
-    const Changed = 2
-    /**
-     * The file got deleted.
-     */
-    const Deleted = 3
-  }
-
-  export type FileChangeType = 1 | 2 | 3
-
-  /**
-   * An event describing a file change.
-   */
-  export interface FileEvent {
-    /**
-     * The file's uri.
-     */
-    uri: string
-    /**
-     * The change type.
-     */
-    type: FileChangeType
-  }
-
-  export interface WorkDoneProgressEnd {
-    kind: 'end'
-    /**
-     * Optional, a final message indicating to for example indicate the outcome
-     * of the operation.
-     */
-    message?: string
-  }
-
-  /**
-   * A literal to identify a text document in the client.
-   */
-  export interface TextDocumentIdentifier {
-    /**
-     * The text document's uri.
-     */
-    uri: string
-  }
-
-  /**
-   * A parameter literal used in requests to pass a text document and a position inside that
-   * document.
-   */
-  export interface TextDocumentPositionParams {
-    /**
-     * The text document.
-     */
-    textDocument: TextDocumentIdentifier
-    /**
-     * The position inside the text document.
-     */
-    position: Position
-  }
-
-  export interface WorkspaceFolder {
-    /**
-     * The associated URI for this workspace folder.
-     */
-    uri: string
-    /**
-     * The name of the workspace folder. Used to refer to this
-     * workspace folder in the user interface.
-     */
-    name: string
-  }
-
-  /**
-   * An event describing a change to a text document.
-   */
-  export interface TextDocumentContentChange {
-    /**
-     * The range of the document that changed.
-     */
-    range: Range
-    /**
-     * The new text for the provided range.
-     */
-    text: string
-  }
-
-  /**
-   * The workspace folder change event.
-   */
-  export interface WorkspaceFoldersChangeEvent {
-    /**
-     * The array of added workspace folders
-     */
-    added: WorkspaceFolder[]
-    /**
-     * The array of the removed workspace folders
-     */
-    removed: WorkspaceFolder[]
-  }
-
-  /**
-   * An event that is fired when a [document](#TextDocument) will be saved.
+   * When the issue is addressed LSPAny can be defined as follows:
    *
-   * To make modifications to the document before it is being saved, call the
-   * [`waitUntil`](#TextDocumentWillSaveEvent.waitUntil)-function with a thenable
-   * that resolves to an array of [text edits](#TextEdit).
-   */
-  export interface TextDocumentWillSaveEvent {
-
-    /**
-     * The document that will be saved.
-     */
-    document: TextDocument
-
-    /**
-     * The reason why save was triggered.
-     */
-    reason: 1 | 2 | 3
-  }
-
-  /**
-   * A document filter denotes a document by different properties like
-   * the [language](#TextDocument.languageId), the [scheme](#Uri.scheme) of
-   * its resource, or a glob-pattern that is applied to the [path](#TextDocument.fileName).
-   *
-   * Glob patterns can have the following syntax:
-   * - `*` to match one or more characters in a path segment
-   * - `?` to match on one character in a path segment
-   * - `**` to match any number of path segments, including none
-   * - `{}` to group conditions (e.g. `**​/*.{ts,js}` matches all TypeScript and JavaScript files)
-   * - `[]` to declare a range of characters to match in a path segment (e.g., `example.[0-9]` to match on `example.0`, `example.1`, …)
-   * - `[!...]` to negate a range of characters to match in a path segment (e.g., `example.[!0-9]` to match on `example.a`, `example.b`, but not `example.0`)
-   *
-   * @sample A language filter that applies to typescript files on disk: `{ language: 'typescript', scheme: 'file' }`
-   * @sample A language filter that applies to all package.json paths: `{ language: 'json', pattern: '**package.json' }`
-   */
-  export type DocumentFilter = {
-    /** A language id, like `typescript`. */
-    language: string
-    /** A Uri [scheme](#Uri.scheme), like `file` or `untitled`. */
-    scheme?: string
-    /** A glob pattern, like `*.{ts,js}`. */
-    pattern?: string
-  } | {
-    /** A language id, like `typescript`. */
-    language?: string
-    /** A Uri [scheme](#Uri.scheme), like `file` or `untitled`. */
-    scheme: string
-    /** A glob pattern, like `*.{ts,js}`. */
-    pattern?: string
-  } | {
-    /** A language id, like `typescript`. */
-    language?: string
-    /** A Uri [scheme](#Uri.scheme), like `file` or `untitled`. */
-    scheme?: string
-    /** A glob pattern, like `*.{ts,js}`. */
-    pattern: string
-  }
-  /**
-   * A document selector is the combination of one or many document filters.
-   *
-   * @sample `let sel:DocumentSelector = [{ language: 'typescript' }, { language: 'json', pattern: '**∕tsconfig.json' }]`;
-   */
-  export type DocumentSelector = (string | DocumentFilter)[]
-  /**
-   * A selection range represents a part of a selection hierarchy. A selection range
-   * may have a parent selection range that contains it.
-   */
-  export interface SelectionRange {
-    /**
-     * The [range](#Range) of this selection range.
-     */
-    range: Range
-    /**
-     * The parent selection range containing this range. Therefore `parent.range` must contain `this.range`.
-     */
-    parent?: SelectionRange
-  }
-
-  /**
-   * MarkedString can be used to render human readable text. It is either a markdown string
-   * or a code-block that provides a language and a code snippet. The language identifier
-   * is semantically equal to the optional language identifier in fenced code blocks in GitHub
-   * issues. See https://help.github.com/articles/creating-and-highlighting-code-blocks/#syntax-highlighting
-   *
-   * The pair of a language and a value is an equivalent to markdown:
-   * ```${language}
-   * ${value}
+   * ```ts
+   * export type LSPAny = LSPObject | LSPArray | string | integer | uinteger | decimal | boolean | null | undefined;
+   * export type LSPObject = { [key: string]: LSPAny };
+   * export type LSPArray = LSPAny[];
    * ```
    *
-   * Note that markdown strings will be sanitized - that means html will be escaped.
-   * @deprecated use MarkupContent instead.
-   */
-  export type MarkedString = string | {
-    language: string
-    value: string
-  }
-  /**
-   * The result of a hover request.
-   */
-  export interface Hover {
-    /**
-     * The hover's content
-     */
-    contents: MarkupContent | MarkedString | MarkedString[]
-    /**
-     * An optional range
-     */
-    range?: Range
-  }
-
-  /**
-   * The definition of a symbol represented as one or many [locations](#Location).
-   * For most programming languages there is only one location at which a symbol is
-   * defined.
+   * Please note that strictly speaking a property with the value `undefined`
+   * can't be converted into JSON preserving the property name. However for
+   * convenience it is allowed and assumed that all these properties are
+   * optional as well.
    *
-   * Servers should prefer returning `DefinitionLink` over `Definition` if supported
-   * by the client.
+   * @since 3.17.0
    */
-  export type Definition = Location | Location[]
-
+  export type LSPAny = any
+  export type LSPObject = object
+  export type LSPArray = any[]
   /**
-   * Information about where a symbol is defined.
+   * Position in a text document expressed as zero-based line and character
+   * offset. Prior to 3.17 the offsets were always based on a UTF-16 string
+   * representation. So a string of the form `a𐐀b` the character offset of the
+   * character `a` is 0, the character offset of `𐐀` is 1 and the character
+   * offset of b is 3 since `𐐀` is represented using two code units in UTF-16.
+   * Since 3.17 clients and servers can agree on a different string encoding
+   * representation (e.g. UTF-8). The client announces it's supported encoding
+   * via the client capability [`general.positionEncodings`](#clientCapabilities).
+   * The value is an array of position encodings the client supports, with
+   * decreasing preference (e.g. the encoding at index `0` is the most preferred
+   * one). To stay backwards compatible the only mandatory encoding is UTF-16
+   * represented via the string `utf-16`. The server can pick one of the
+   * encodings offered by the client and signals that encoding back to the
+   * client via the initialize result's property
+   * [`capabilities.positionEncoding`](#serverCapabilities). If the string value
+   * `utf-16` is missing from the client's capability `general.positionEncodings`
+   * servers can safely assume that the client supports UTF-16. If the server
+   * omits the position encoding in its initialize result the encoding defaults
+   * to the string value `utf-16`. Implementation considerations: since the
+   * conversion from one encoding into another requires the content of the
+   * file / line the conversion is best done where the file is read which is
+   * usually on the server side.
    *
-   * Provides additional metadata over normal [location](#Location) definitions, including the range of
-   * the defining symbol
-   */
-  export type DefinitionLink = LocationLink
-
-  /**
-   * How a signature help was triggered.
-   */
-  export namespace SignatureHelpTriggerKind {
-    /**
-    * Signature help was invoked manually by the user or by a command.
-    */
-    const Invoked: 1
-    /**
-    * Signature help was triggered by a trigger character.
-    */
-    const TriggerCharacter: 2
-    /**
-    * Signature help was triggered by the cursor moving or by the document content changing.
-    */
-    const ContentChange: 3
-  }
-
-  export type SignatureHelpTriggerKind = 1 | 2 | 3
-
-  /**
-   * Represents the signature of something callable. A signature
-   * can have a label, like a function-name, a doc-comment, and
-   * a set of parameters.
-   */
-  export interface SignatureInformation {
-    /**
-     * The label of this signature. Will be shown in
-     * the UI.
-     */
-    label: string
-    /**
-     * The human-readable doc-comment of this signature. Will be shown
-     * in the UI but can be omitted.
-     */
-    documentation?: string | MarkupContent
-    /**
-     * The parameters of this signature.
-     */
-    parameters?: ParameterInformation[]
-  }
-
-  /**
-   * Represents a parameter of a callable-signature. A parameter can
-   * have a label and a doc-comment.
-   */
-  export interface ParameterInformation {
-    /**
-     * The label of this parameter information.
-     *
-     * Either a string or an inclusive start and exclusive end offsets within its containing
-     * signature label. (see SignatureInformation.label). The offsets are based on a UTF-16
-     * string representation as `Position` and `Range` does.
-     *
-     * *Note*: a label of type string should be a substring of its containing signature label.
-     * Its intended use case is to highlight the parameter label part in the `SignatureInformation.label`.
-     */
-    label: string | [number, number]
-    /**
-     * The human-readable doc-comment of this signature. Will be shown
-     * in the UI but can be omitted.
-     */
-    documentation?: string | MarkupContent
-  }
-
-  /**
-   * Signature help represents the signature of something
-   * callable. There can be multiple signature but only one
-   * active and only one active parameter.
-   */
-  export interface SignatureHelp {
-    /**
-     * One or more signatures.
-     */
-    signatures: SignatureInformation[]
-    /**
-     * The active signature. Set to `null` if no
-     * signatures exist.
-     */
-    activeSignature: number | null
-    /**
-     * The active parameter of the active signature. Set to `null`
-     * if the active signature has no parameters.
-     */
-    activeParameter: number | null
-  }
-  /**
-   * Additional information about the context in which a signature help request was triggered.
+   * Positions are line end character agnostic. So you can not specify a position
+   * that denotes `\r|\n` or `\n|` where `|` represents the character offset.
    *
-   * @since 3.15.0
+   * @since 3.17.0 - support for negotiated position encoding.
    */
-  export interface SignatureHelpContext {
+  export interface Position {
     /**
-     * Action that caused signature help to be triggered.
-     */
-    triggerKind: SignatureHelpTriggerKind
-    /**
-     * Character that caused signature help to be triggered.
+     * Line position in a document (zero-based).
      *
-     * This is undefined when `triggerKind !== SignatureHelpTriggerKind.TriggerCharacter`
+     * If a line number is greater than the number of lines in a document, it defaults back to the number of lines in the document.
+     * If a line number is negative, it defaults to 0.
      */
-    triggerCharacter?: string
+    line: uinteger
     /**
-     * `true` if signature help was already showing when it was triggered.
+     * Character offset on a line in a document (zero-based).
      *
-     * Retriggers occur when the signature help is already active and can be caused by actions such as
-     * typing a trigger character, a cursor move, or document content changes.
-     */
-    isRetrigger: boolean
-    /**
-     * The currently active `SignatureHelp`.
+     * The meaning of this offset is determined by the negotiated
+     * `PositionEncodingKind`.
      *
-     * The `activeSignatureHelp` has its `SignatureHelp.activeSignature` field updated based on
-     * the user navigating through available signatures.
+     * If the character value is greater than the line length it defaults back to the
+     * line length.
      */
-    activeSignatureHelp?: SignatureHelp
+    character: uinteger
   }
-
   /**
-   * Represents a folding range.
+   * The Position namespace provides helper functions to work with
+   * [Position](#Position) literals.
    */
-  export interface FoldingRange {
+  export namespace Position {
     /**
-     * The zero-based line number from where the folded range starts.
+     * Creates a new Position literal from the given line and character.
+     * @param line The position's line.
+     * @param character The position's character.
      */
-    startLine: number
+    function create(line: uinteger, character: uinteger): Position
     /**
-     * The zero-based character offset from where the folded range starts. If not defined, defaults to the length of the start line.
+     * Checks whether the given literal conforms to the [Position](#Position) interface.
      */
-    startCharacter?: number
-    /**
-     * The zero-based line number where the folded range ends.
-     */
-    endLine: number
-    /**
-     * The zero-based character offset before the folded range ends. If not defined, defaults to the length of the end line.
-     */
-    endCharacter?: number
-    /**
-     * Describes the kind of the folding range such as `comment' or 'region'. The kind
-     * is used to categorize folding ranges and used by commands like 'Fold all comments'. See
-     * [FoldingRangeKind](#FoldingRangeKind) for an enumeration of standardized kinds.
-     */
-    kind?: string
+    function is(value: any): value is Position
   }
-
   /**
-   * A symbol kind.
+   * A range in a text document expressed as (zero-based) start and end positions.
+   *
+   * If you want to specify a range that contains a line including the line ending
+   * character(s) then use an end position denoting the start of the next line.
+   * For example:
+   * ```ts
+   * {
+   *     start: { line: 5, character: 23 }
+   *     end : { line 6, character : 0 }
+   * }
+   * ```
    */
-  export namespace SymbolKind {
-    const File: 1
-    const Module: 2
-    const Namespace: 3
-    const Package: 4
-    const Class: 5
-    const Method: 6
-    const Property: 7
-    const Field: 8
-    const Constructor: 9
-    const Enum: 10
-    const Interface: 11
-    const Function: 12
-    const Variable: 13
-    const Constant: 14
-    const String: 15
-    const Number: 16
-    const Boolean: 17
-    const Array: 18
-    const Object: 19
-    const Key: 20
-    const Null: 21
-    const EnumMember: 22
-    const Struct: 23
-    const Event: 24
-    const Operator: 25
-    const TypeParameter: 26
+  export interface Range {
+    /**
+     * The range's start position.
+     */
+    start: Position
+    /**
+     * The range's end position.
+     */
+    end: Position
   }
-
-  export type SymbolKind = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26
-
   /**
-   * Represents information about programming constructs like variables, classes,
-   * interfaces etc.
+   * The Range namespace provides helper functions to work with
+   * [Range](#Range) literals.
    */
-  export interface SymbolInformation {
+  export namespace Range {
     /**
-     * The name of this symbol.
+     * Create a new Range literal.
+     * @param start The range's start position.
+     * @param end The range's end position.
      */
-    name: string
+    function create(start: Position, end: Position): Range
     /**
-     * The kind of this symbol.
+     * Create a new Range literal.
+     * @param startLine The start line number.
+     * @param startCharacter The start character.
+     * @param endLine The end line number.
+     * @param endCharacter The end character.
      */
-    kind: SymbolKind
+    function create(startLine: uinteger, startCharacter: uinteger, endLine: uinteger, endCharacter: uinteger): Range
     /**
-     * Indicates if this symbol is deprecated.
+     * Checks whether the given literal conforms to the [Range](#Range) interface.
      */
-    deprecated?: boolean
-    /**
-     * The location of this symbol. The location's range is used by a tool
-     * to reveal the location in the editor. If the symbol is selected in the
-     * tool the range's start information is used to position the cursor. So
-     * the range usually spans more than the actual symbol's name and does
-     * normally include thinks like visibility modifiers.
-     *
-     * The range doesn't have to denote a node range in the sense of a abstract
-     * syntax tree. It can therefore not be used to re-construct a hierarchy of
-     * the symbols.
-     */
-    location: Location
-    /**
-     * The name of the symbol containing this symbol. This information is for
-     * user interface purposes (e.g. to render a qualifier in the user interface
-     * if necessary). It can't be used to re-infer a hierarchy for the document
-     * symbols.
-     */
-    containerName?: string
+    function is(value: any): value is Range
   }
-
   /**
-   * Represents programming constructs like variables, classes, interfaces etc.
-   * that appear in a document. Document symbols can be hierarchical and they
-   * have two ranges: one that encloses its definition and one that points to
-   * its most interesting range, e.g. the range of an identifier.
+   * Represents a location inside a resource, such as a line
+   * inside a text file.
    */
-  export interface DocumentSymbol {
-    /**
-     * The name of this symbol. Will be displayed in the user interface and therefore must not be
-     * an empty string or a string only consisting of white spaces.
-     */
-    name: string
-    /**
-     * More detail for this symbol, e.g the signature of a function.
-     */
-    detail?: string
-    /**
-     * The kind of this symbol.
-     */
-    kind: SymbolKind
-    /**
-     * Indicates if this symbol is deprecated.
-     */
-    deprecated?: boolean
-    /**
-     * The range enclosing this symbol not including leading/trailing whitespace but everything else
-     * like comments. This information is typically used to determine if the the clients cursor is
-     * inside the symbol to reveal in the symbol in the UI.
-     */
+  export interface Location {
+    uri: DocumentUri
     range: Range
-    /**
-     * The range that should be selected and revealed when this symbol is being picked, e.g the name of a function.
-     * Must be contained by the the `range`.
-     */
-    selectionRange: Range
-    /**
-     * Children of this symbol, e.g. properties of a class.
-     */
-    children?: DocumentSymbol[]
   }
-
-  export interface FormattingOptions {
-    /**
-     * If indentation is based on spaces (`insertSpaces` = true), the number of spaces that make an indent.
-     */
-    tabSize?: number
-    /**
-     * Is indentation based on spaces?
-     */
-    insertSpaces?: boolean
-    /**
-     * The default 'end of line' character. If not set, '\n' is used as default.
-     */
-    eol?: string
-  }
-
   /**
-   * Contains additional diagnostic information about the context in which
-   * a [code action](#CodeActionProvider.provideCodeActions) is run.
+   * The Location namespace provides helper functions to work with
+   * [Location](#Location) literals.
    */
-  export interface CodeActionContext {
+  export namespace Location {
     /**
-     * An array of diagnostics known on the client side overlapping the range provided to the
-     * `textDocument/codeAction` request. They are provied so that the server knows which
-     * errors are currently presented to the user for the given range. There is no guarantee
-     * that these accurately reflect the error state of the resource. The primary parameter
-     * to compute code actions is the provided range.
+     * Creates a Location literal.
+     * @param uri The location's uri.
+     * @param range The location's range.
      */
-    diagnostics: Diagnostic[]
+    function create(uri: DocumentUri, range: Range): Location
     /**
-     * Requested kind of actions to return.
+     * Checks whether the given literal conforms to the [Location](#Location) interface.
+     */
+    function is(value: any): value is Location
+  }
+  /**
+       * Represents the connection of two locations. Provides additional metadata over normal [locations](#Location),
+       * including an origin range.
+   */
+  export interface LocationLink {
+    /**
+     * Span of the origin of this link.
      *
-     * Actions not of this kind are filtered out by the client before being shown. So servers
-     * can omit computing them.
+     * Used as the underlined span for mouse interaction. Defaults to the word range at
+     * the definition position.
      */
-    only?: string[]
+    originSelectionRange?: Range
+    /**
+     * The target resource identifier of this link.
+     */
+    targetUri: DocumentUri
+    /**
+     * The full target range of this link. If the target for example is a symbol then target range is the
+     * range enclosing this symbol not including leading/trailing whitespace but everything else
+     * like comments. This information is typically used to highlight the range in the editor.
+     */
+    targetRange: Range
+    /**
+     * The range that should be selected and revealed when this link is being followed, e.g the name of a function.
+     * Must be contained by the `targetRange`. See also `DocumentSymbol#range`
+     */
+    targetSelectionRange: Range
   }
-
-
   /**
-   * A document highlight kind.
+   * The LocationLink namespace provides helper functions to work with
+   * [LocationLink](#LocationLink) literals.
    */
-  export namespace DocumentHighlightKind {
+  export namespace LocationLink {
     /**
-     * A textual occurrence.
+     * Creates a LocationLink literal.
+     * @param targetUri The definition's uri.
+     * @param targetRange The full range of the definition.
+     * @param targetSelectionRange The span of the symbol definition at the target.
+     * @param originSelectionRange The span of the symbol being defined in the originating source file.
      */
-    const Text: 1
+    function create(targetUri: DocumentUri, targetRange: Range, targetSelectionRange: Range, originSelectionRange?: Range): LocationLink
     /**
-     * Read-access of a symbol, like reading a variable.
+     * Checks whether the given literal conforms to the [LocationLink](#LocationLink) interface.
      */
-    const Read: 2
-    /**
-     * Write-access of a symbol, like writing to a variable.
-     */
-    const Write: 3
+    function is(value: any): value is LocationLink
   }
-
-  export type DocumentHighlightKind = 1 | 2 | 3
-  /**
-   * A document highlight is a range inside a text document which deserves
-   * special attention. Usually a document highlight is visualized by changing
-   * the background color of its range.
-   */
-  export interface DocumentHighlight {
-    /**
-     * The range this highlight applies to.
-     */
-    range: Range
-    /**
-     * The highlight kind, default is [text](#DocumentHighlightKind.Text).
-     */
-    kind?: DocumentHighlightKind
-  }
-
-  /**
-   * A document link is a range in a text document that links to an internal or external resource, like another
-   * text document or a web site.
-   */
-  export interface DocumentLink {
-    /**
-     * The range this link applies to.
-     */
-    range: Range
-    /**
-     * The uri this link points to.
-     */
-    target?: string
-    /**
-     * The tooltip text when you hover over this link.
-     *
-     * If a tooltip is provided, is will be displayed in a string that includes instructions on how to
-     * trigger the link, such as `{0} (ctrl + click)`. The specific instructions vary depending on OS,
-     * user settings, and localization.
-     *
-     * @since 3.15.0
-     */
-    tooltip?: string
-    /**
-     * A data entry field that is preserved on a document link between a
-     * DocumentLinkRequest and a DocumentLinkResolveRequest.
-     */
-    data?: any
-  }
-
   /**
    * Represents a color in RGBA space.
    */
@@ -711,27 +258,40 @@ declare module 'coc.nvim' {
     /**
      * The red component of this color in the range [0-1].
      */
-    readonly red: number
+    readonly red: decimal
     /**
      * The green component of this color in the range [0-1].
      */
-    readonly green: number
+    readonly green: decimal
     /**
      * The blue component of this color in the range [0-1].
      */
-    readonly blue: number
+    readonly blue: decimal
     /**
      * The alpha component of this color in the range [0-1].
      */
-    readonly alpha: number
+    readonly alpha: decimal
   }
-
+  /**
+   * The Color namespace provides helper functions to work with
+   * [Color](#Color) literals.
+   */
+  export namespace Color {
+    /**
+     * Creates a new Color literal.
+     */
+    function create(red: decimal, green: decimal, blue: decimal, alpha: decimal): Color
+    /**
+     * Checks whether the given literal conforms to the [Color](#Color) interface.
+     */
+    function is(value: any): value is Color
+  }
   /**
    * Represents a color range from a document.
    */
   export interface ColorInformation {
     /**
-     * The range in the document where this color appers.
+     * The range in the document where this color appears.
      */
     range: Range
     /**
@@ -739,7 +299,20 @@ declare module 'coc.nvim' {
      */
     color: Color
   }
-
+  /**
+   * The ColorInformation namespace provides helper functions to work with
+   * [ColorInformation](#ColorInformation) literals.
+   */
+  export namespace ColorInformation {
+    /**
+     * Creates a new ColorInformation literal.
+     */
+    function create(range: Range, color: Color): ColorInformation
+    /**
+     * Checks whether the given literal conforms to the [ColorInformation](#ColorInformation) interface.
+     */
+    function is(value: any): value is ColorInformation
+  }
   export interface ColorPresentation {
     /**
      * The label of this color presentation. It will be shown on the color
@@ -759,81 +332,798 @@ declare module 'coc.nvim' {
      */
     additionalTextEdits?: TextEdit[]
   }
-
   /**
-   * A code lens represents a [command](#Command) that should be shown along with
-   * source text, like the number of references, a way to run tests, etc.
-   *
-   * A code lens is _unresolved_ when no command is associated to it. For performance
-   * reasons the creation of a code lens and resolving should be done to two stages.
+   * The Color namespace provides helper functions to work with
+   * [ColorPresentation](#ColorPresentation) literals.
    */
-  export interface CodeLens {
+  export namespace ColorPresentation {
     /**
-     * The range in which this code lens is valid. Should only span a single line.
+     * Creates a new ColorInformation literal.
+     */
+    function create(label: string, textEdit?: TextEdit, additionalTextEdits?: TextEdit[]): ColorPresentation
+    /**
+     * Checks whether the given literal conforms to the [ColorInformation](#ColorInformation) interface.
+     */
+    function is(value: any): value is ColorPresentation
+  }
+  /**
+   * A set of predefined range kinds.
+   */
+  export namespace FoldingRangeKind {
+    /**
+     * Folding range for a comment
+     */
+    const Comment = "comment"
+    /**
+     * Folding range for an import or include
+     */
+    const Imports = "imports"
+    /**
+     * Folding range for a region (e.g. `#region`)
+     */
+    const Region = "region"
+  }
+  /**
+   * A predefined folding range kind.
+   *
+   * The type is a string since the value set is extensible
+   */
+  export type FoldingRangeKind = string
+  /**
+   * Represents a folding range. To be valid, start and end line must be bigger than zero and smaller
+   * than the number of lines in the document. Clients are free to ignore invalid ranges.
+   */
+  export interface FoldingRange {
+    /**
+     * The zero-based start line of the range to fold. The folded area starts after the line's last character.
+     * To be valid, the end must be zero or larger and smaller than the number of lines in the document.
+     */
+    startLine: uinteger
+    /**
+     * The zero-based character offset from where the folded range starts. If not defined, defaults to the length of the start line.
+     */
+    startCharacter?: uinteger
+    /**
+     * The zero-based end line of the range to fold. The folded area ends with the line's last character.
+     * To be valid, the end must be zero or larger and smaller than the number of lines in the document.
+     */
+    endLine: uinteger
+    /**
+     * The zero-based character offset before the folded range ends. If not defined, defaults to the length of the end line.
+     */
+    endCharacter?: uinteger
+    /**
+     * Describes the kind of the folding range such as `comment' or 'region'. The kind
+     * is used to categorize folding ranges and used by commands like 'Fold all comments'.
+     * See [FoldingRangeKind](#FoldingRangeKind) for an enumeration of standardized kinds.
+     */
+    kind?: FoldingRangeKind
+    /**
+     * The text that the client should show when the specified range is
+     * collapsed. If not defined or not supported by the client, a default
+     * will be chosen by the client.
+     *
+     * @since 3.17.0
+     */
+    collapsedText?: string
+  }
+  /**
+   * The folding range namespace provides helper functions to work with
+   * [FoldingRange](#FoldingRange) literals.
+   */
+  export namespace FoldingRange {
+    /**
+     * Creates a new FoldingRange literal.
+     */
+    function create(startLine: uinteger, endLine: uinteger, startCharacter?: uinteger, endCharacter?: uinteger, kind?: FoldingRangeKind, collapsedText?: string): FoldingRange
+    /**
+     * Checks whether the given literal conforms to the [FoldingRange](#FoldingRange) interface.
+     */
+    function is(value: any): value is FoldingRange
+  }
+  /**
+   * Represents a related message and source code location for a diagnostic. This should be
+   * used to point to code locations that cause or related to a diagnostics, e.g when duplicating
+   * a symbol in a scope.
+   */
+  export interface DiagnosticRelatedInformation {
+    /**
+     * The location of this related diagnostic information.
+     */
+    location: Location
+    /**
+     * The message of this related diagnostic information.
+     */
+    message: string
+  }
+  /**
+   * The DiagnosticRelatedInformation namespace provides helper functions to work with
+   * [DiagnosticRelatedInformation](#DiagnosticRelatedInformation) literals.
+   */
+  export namespace DiagnosticRelatedInformation {
+    /**
+     * Creates a new DiagnosticRelatedInformation literal.
+     */
+    function create(location: Location, message: string): DiagnosticRelatedInformation
+    /**
+     * Checks whether the given literal conforms to the [DiagnosticRelatedInformation](#DiagnosticRelatedInformation) interface.
+     */
+    function is(value: any): value is DiagnosticRelatedInformation
+  }
+  /**
+   * The diagnostic's severity.
+   */
+  export namespace DiagnosticSeverity {
+    /**
+     * Reports an error.
+     */
+    const Error: 1
+    /**
+     * Reports a warning.
+     */
+    const Warning: 2
+    /**
+     * Reports an information.
+     */
+    const Information: 3
+    /**
+     * Reports a hint.
+     */
+    const Hint: 4
+  }
+  export type DiagnosticSeverity = 1 | 2 | 3 | 4
+  /**
+   * The diagnostic tags.
+   *
+   * @since 3.15.0
+   */
+  export namespace DiagnosticTag {
+    /**
+     * Unused or unnecessary code.
+     *
+     * Clients are allowed to render diagnostics with this tag faded out instead of having
+     * an error squiggle.
+     */
+    const Unnecessary: 1
+    /**
+     * Deprecated or obsolete code.
+     *
+     * Clients are allowed to rendered diagnostics with this tag strike through.
+     */
+    const Deprecated: 2
+  }
+  export type DiagnosticTag = 1 | 2
+  /**
+   * Structure to capture a description for an error code.
+   *
+   * @since 3.16.0
+   */
+  export interface CodeDescription {
+    /**
+     * An URI to open with more information about the diagnostic error.
+     */
+    href: string
+  }
+  /**
+   * The CodeDescription namespace provides functions to deal with descriptions for diagnostic codes.
+   *
+   * @since 3.16.0
+   */
+  export namespace CodeDescription {
+    function is(value: any): value is CodeDescription
+  }
+  /**
+   * Represents a diagnostic, such as a compiler error or warning. Diagnostic objects
+   * are only valid in the scope of a resource.
+   */
+  export interface Diagnostic {
+    /**
+     * The range at which the message applies
      */
     range: Range
     /**
-     * The command this code lens represents.
+     * The diagnostic's severity. Can be omitted. If omitted it is up to the
+     * client to interpret diagnostics as error, warning, info or hint.
      */
-    command?: Command
+    severity?: DiagnosticSeverity
     /**
-     * An data entry field that is preserved on a code lens item between
-     * a [CodeLensRequest](#CodeLensRequest) and a [CodeLensResolveRequest]
-     * (#CodeLensResolveRequest)
+     * The diagnostic's code, which usually appear in the user interface.
      */
-    data?: any
-  }
-
-  /**
-   * Represents the connection of two locations. Provides additional metadata over normal [locations](#Location),
-   * including an origin range.
-   */
-  export interface LocationLink {
+    code?: integer | string
     /**
-     * Span of the origin of this link.
+     * An optional property to describe the error code.
+     * Requires the code field (above) to be present/not null.
      *
-     * Used as the underlined span for mouse definition hover. Defaults to the word range at
-     * the definition position.
+     * @since 3.16.0
      */
-    originSelectionRange?: Range
+    codeDescription?: CodeDescription
     /**
-     * The target resource identifier of this link.
+     * A human-readable string describing the source of this
+     * diagnostic, e.g. 'typescript' or 'super lint'. It usually
+     * appears in the user interface.
      */
-    targetUri: string
+    source?: string
     /**
-     * The full target range of this link. If the target for example is a symbol then target range is the
-     * range enclosing this symbol not including leading/trailing whitespace but everything else
-     * like comments. This information is typically used to highlight the range in the editor.
+     * The diagnostic's message. It usually appears in the user interface
      */
-    targetRange: Range
+    message: string
     /**
-     * The range that should be selected and revealed when this link is being followed, e.g the name of a function.
-     * Must be contained by the the `targetRange`. See also `DocumentSymbol#range`
+     * Additional metadata about the diagnostic.
+     *
+     * @since 3.15.0
      */
-    targetSelectionRange: Range
+    tags?: DiagnosticTag[]
+    /**
+     * An array of related diagnostic information, e.g. when symbol-names within
+     * a scope collide all definitions can be marked via this property.
+     */
+    relatedInformation?: DiagnosticRelatedInformation[]
+    /**
+     * A data entry field that is preserved between a `textDocument/publishDiagnostics`
+     * notification and `textDocument/codeAction` request.
+     *
+     * @since 3.16.0
+     */
+    data?: LSPAny
   }
-
   /**
-   * The LocationLink namespace provides helper functions to work with
-   * [LocationLink](#LocationLink) literals.
+   * The Diagnostic namespace provides helper functions to work with
+   * [Diagnostic](#Diagnostic) literals.
    */
-  export namespace LocationLink {
+  export namespace Diagnostic {
     /**
-     * Creates a LocationLink literal.
-     * @param targetUri The definition's uri.
-     * @param targetRange The full range of the definition.
-     * @param targetSelectionRange The span of the symbol definition at the target.
-     * @param originSelectionRange The span of the symbol being defined in the originating source file.
-    */
-    function create(targetUri: string, targetRange: Range, targetSelectionRange: Range, originSelectionRange?: Range): LocationLink
-    /**
-     * Checks whether the given literal conforms to the [LocationLink](#LocationLink) interface.
+     * Creates a new Diagnostic literal.
      */
-    function is(value: any): value is LocationLink
+    function create(range: Range, message: string, severity?: DiagnosticSeverity, code?: integer | string, source?: string, relatedInformation?: DiagnosticRelatedInformation[]): Diagnostic
+    /**
+     * Checks whether the given literal conforms to the [Diagnostic](#Diagnostic) interface.
+     */
+    function is(value: any): value is Diagnostic
   }
-
-  export type MarkupKind = 'plaintext' | 'markdown'
-
+  /**
+   * Represents a reference to a command. Provides a title which
+   * will be used to represent a command in the UI and, optionally,
+   * an array of arguments which will be passed to the command handler
+   * function when invoked.
+   */
+  export interface Command {
+    /**
+     * Title of the command, like `save`.
+     */
+    title: string
+    /**
+     * The identifier of the actual command handler.
+     */
+    command: string
+    /**
+     * Arguments that the command handler should be
+     * invoked with.
+     */
+    arguments?: LSPAny[]
+  }
+  /**
+   * The Command namespace provides helper functions to work with
+   * [Command](#Command) literals.
+   */
+  export namespace Command {
+    /**
+     * Creates a new Command literal.
+     */
+    function create(title: string, command: string, ...args: any[]): Command
+    /**
+     * Checks whether the given literal conforms to the [Command](#Command) interface.
+     */
+    function is(value: any): value is Command
+  }
+  /**
+   * A text edit applicable to a text document.
+   */
+  export interface TextEdit {
+    /**
+     * The range of the text document to be manipulated. To insert
+     * text into a document create a range where start === end.
+     */
+    range: Range
+    /**
+     * The string to be inserted. For delete operations use an
+     * empty string.
+     */
+    newText: string
+  }
+  /**
+   * The TextEdit namespace provides helper function to create replace,
+   * insert and delete edits more easily.
+   */
+  export namespace TextEdit {
+    /**
+     * Creates a replace text edit.
+     * @param range The range of text to be replaced.
+     * @param newText The new text.
+     */
+    function replace(range: Range, newText: string): TextEdit
+    /**
+     * Creates an insert text edit.
+     * @param position The position to insert the text at.
+     * @param newText The text to be inserted.
+     */
+    function insert(position: Position, newText: string): TextEdit
+    /**
+     * Creates a delete text edit.
+     * @param range The range of text to be deleted.
+     */
+    function del(range: Range): TextEdit
+    function is(value: any): value is TextEdit
+  }
+  /**
+   * Additional information that describes document changes.
+   *
+   * @since 3.16.0
+   */
+  export interface ChangeAnnotation {
+    /**
+     * A human-readable string describing the actual change. The string
+     * is rendered prominent in the user interface.
+     */
+    label: string
+    /**
+     * A flag which indicates that user confirmation is needed
+     * before applying the change.
+     */
+    needsConfirmation?: boolean
+    /**
+     * A human-readable string which is rendered less prominent in
+     * the user interface.
+     */
+    description?: string
+  }
+  export namespace ChangeAnnotation {
+    function create(label: string, needsConfirmation?: boolean, description?: string): ChangeAnnotation
+    function is(value: any): value is ChangeAnnotation
+  }
+  export namespace ChangeAnnotationIdentifier {
+    function is(value: any): value is ChangeAnnotationIdentifier
+  }
+  /**
+   * An identifier to refer to a change annotation stored with a workspace edit.
+   */
+  export type ChangeAnnotationIdentifier = string
+  /**
+   * A special text edit with an additional change annotation.
+   *
+   * @since 3.16.0.
+   */
+  export interface AnnotatedTextEdit extends TextEdit {
+    /**
+     * The actual identifier of the change annotation
+     */
+    annotationId: ChangeAnnotationIdentifier
+  }
+  export namespace AnnotatedTextEdit {
+    /**
+     * Creates an annotated replace text edit.
+     *
+     * @param range The range of text to be replaced.
+     * @param newText The new text.
+     * @param annotation The annotation.
+     */
+    function replace(range: Range, newText: string, annotation: ChangeAnnotationIdentifier): AnnotatedTextEdit
+    /**
+     * Creates an annotated insert text edit.
+     *
+     * @param position The position to insert the text at.
+     * @param newText The text to be inserted.
+     * @param annotation The annotation.
+     */
+    function insert(position: Position, newText: string, annotation: ChangeAnnotationIdentifier): AnnotatedTextEdit
+    /**
+     * Creates an annotated delete text edit.
+     *
+     * @param range The range of text to be deleted.
+     * @param annotation The annotation.
+     */
+    function del(range: Range, annotation: ChangeAnnotationIdentifier): AnnotatedTextEdit
+    function is(value: any): value is AnnotatedTextEdit
+  }
+  /**
+   * Describes textual changes on a text document. A TextDocumentEdit describes all changes
+   * on a document version Si and after they are applied move the document to version Si+1.
+   * So the creator of a TextDocumentEdit doesn't need to sort the array of edits or do any
+   * kind of ordering. However the edits must be non overlapping.
+   */
+  export interface TextDocumentEdit {
+    /**
+     * The text document to change.
+     */
+    textDocument: OptionalVersionedTextDocumentIdentifier
+    /**
+     * The edits to be applied.
+     *
+     * @since 3.16.0 - support for AnnotatedTextEdit. This is guarded using a
+     * client capability.
+     */
+    edits: (TextEdit | AnnotatedTextEdit)[]
+  }
+  /**
+   * The TextDocumentEdit namespace provides helper function to create
+   * an edit that manipulates a text document.
+   */
+  export namespace TextDocumentEdit {
+    /**
+     * Creates a new `TextDocumentEdit`
+     */
+    function create(textDocument: OptionalVersionedTextDocumentIdentifier, edits: (TextEdit | AnnotatedTextEdit)[]): TextDocumentEdit
+    function is(value: any): value is TextDocumentEdit
+  }
+  /**
+   * A generic resource operation.
+   */
+  interface ResourceOperation {
+    /**
+     * The resource operation kind.
+     */
+    kind: string
+    /**
+     * An optional annotation identifier describing the operation.
+     *
+     * @since 3.16.0
+     */
+    annotationId?: ChangeAnnotationIdentifier
+  }
+  /**
+   * Options to create a file.
+   */
+  export interface CreateFileOptions {
+    /**
+     * Overwrite existing file. Overwrite wins over `ignoreIfExists`
+     */
+    overwrite?: boolean
+    /**
+     * Ignore if exists.
+     */
+    ignoreIfExists?: boolean
+  }
+  /**
+   * Create file operation.
+   */
+  export interface CreateFile extends ResourceOperation {
+    /**
+     * A create
+     */
+    kind: 'create'
+    /**
+     * The resource to create.
+     */
+    uri: DocumentUri
+    /**
+     * Additional options
+     */
+    options?: CreateFileOptions
+  }
+  export namespace CreateFile {
+    function create(uri: DocumentUri, options?: CreateFileOptions, annotation?: ChangeAnnotationIdentifier): CreateFile
+    function is(value: any): value is CreateFile
+  }
+  /**
+   * Rename file options
+   */
+  export interface RenameFileOptions {
+    /**
+     * Overwrite target if existing. Overwrite wins over `ignoreIfExists`
+     */
+    overwrite?: boolean
+    /**
+     * Ignores if target exists.
+     */
+    ignoreIfExists?: boolean
+  }
+  /**
+   * Rename file operation
+   */
+  export interface RenameFile extends ResourceOperation {
+    /**
+     * A rename
+     */
+    kind: 'rename'
+    /**
+     * The old (existing) location.
+     */
+    oldUri: DocumentUri
+    /**
+     * The new location.
+     */
+    newUri: DocumentUri
+    /**
+     * Rename options.
+     */
+    options?: RenameFileOptions
+  }
+  export namespace RenameFile {
+    function create(oldUri: DocumentUri, newUri: DocumentUri, options?: RenameFileOptions, annotation?: ChangeAnnotationIdentifier): RenameFile
+    function is(value: any): value is RenameFile
+  }
+  /**
+   * Delete file options
+   */
+  export interface DeleteFileOptions {
+    /**
+     * Delete the content recursively if a folder is denoted.
+     */
+    recursive?: boolean
+    /**
+     * Ignore the operation if the file doesn't exist.
+     */
+    ignoreIfNotExists?: boolean
+  }
+  /**
+   * Delete file operation
+   */
+  export interface DeleteFile extends ResourceOperation {
+    /**
+     * A delete
+     */
+    kind: 'delete'
+    /**
+     * The file to delete.
+     */
+    uri: DocumentUri
+    /**
+     * Delete options.
+     */
+    options?: DeleteFileOptions
+  }
+  export namespace DeleteFile {
+    function create(uri: DocumentUri, options?: DeleteFileOptions, annotation?: ChangeAnnotationIdentifier): DeleteFile
+    function is(value: any): value is DeleteFile
+  }
+  /**
+   * A workspace edit represents changes to many resources managed in the workspace. The edit
+   * should either provide `changes` or `documentChanges`. If documentChanges are present
+   * they are preferred over `changes` if the client can handle versioned document edits.
+   *
+   * Since version 3.13.0 a workspace edit can contain resource operations as well. If resource
+   * operations are present clients need to execute the operations in the order in which they
+   * are provided. So a workspace edit for example can consist of the following two changes:
+   * (1) a create file a.txt and (2) a text document edit which insert text into file a.txt.
+   *
+   * An invalid sequence (e.g. (1) delete file a.txt and (2) insert text into file a.txt) will
+   * cause failure of the operation. How the client recovers from the failure is described by
+   * the client capability: `workspace.workspaceEdit.failureHandling`
+   */
+  export interface WorkspaceEdit {
+    /**
+     * Holds changes to existing resources.
+     */
+    changes?: {
+      [uri: DocumentUri]: TextEdit[]
+    }
+    /**
+     * Depending on the client capability `workspace.workspaceEdit.resourceOperations` document changes
+     * are either an array of `TextDocumentEdit`s to express changes to n different text documents
+     * where each text document edit addresses a specific version of a text document. Or it can contain
+     * above `TextDocumentEdit`s mixed with create, rename and delete file / folder operations.
+     *
+     * Whether a client supports versioned document edits is expressed via
+     * `workspace.workspaceEdit.documentChanges` client capability.
+     *
+     * If a client neither supports `documentChanges` nor `workspace.workspaceEdit.resourceOperations` then
+     * only plain `TextEdit`s using the `changes` property are supported.
+     */
+    documentChanges?: (TextDocumentEdit | CreateFile | RenameFile | DeleteFile)[]
+    /**
+     * A map of change annotations that can be referenced in `AnnotatedTextEdit`s or create, rename and
+     * delete file / folder operations.
+     *
+     * Whether clients honor this property depends on the client capability `workspace.changeAnnotationSupport`.
+     *
+     * @since 3.16.0
+     */
+    changeAnnotations?: {
+      [id: ChangeAnnotationIdentifier]: ChangeAnnotation
+    }
+  }
+  export namespace WorkspaceEdit {
+    function is(value: any): value is WorkspaceEdit
+  }
+  /**
+   * A change to capture text edits for existing resources.
+   */
+  export interface TextEditChange {
+    /**
+     * Gets all text edits for this change.
+     *
+     * @return An array of text edits.
+     *
+     * @since 3.16.0 - support for annotated text edits. This is usually
+     * guarded using a client capability.
+     */
+    all(): (TextEdit | AnnotatedTextEdit)[]
+    /**
+     * Clears the edits for this change.
+     */
+    clear(): void
+    /**
+     * Adds a text edit.
+     *
+     * @param edit the text edit to add.
+     *
+     * @since 3.16.0 - support for annotated text edits. This is usually
+     * guarded using a client capability.
+     */
+    add(edit: TextEdit | AnnotatedTextEdit): void
+    /**
+     * Insert the given text at the given position.
+     *
+     * @param position A position.
+     * @param newText A string.
+     * @param annotation An optional annotation.
+     */
+    insert(position: Position, newText: string): void
+    insert(position: Position, newText: string, annotation: ChangeAnnotation | ChangeAnnotationIdentifier): ChangeAnnotationIdentifier
+    /**
+     * Replace the given range with given text for the given resource.
+     *
+     * @param range A range.
+     * @param newText A string.
+     * @param annotation An optional annotation.
+     */
+    replace(range: Range, newText: string): void
+    replace(range: Range, newText: string, annotation?: ChangeAnnotation | ChangeAnnotationIdentifier): ChangeAnnotationIdentifier
+    /**
+     * Delete the text at the given range.
+     *
+     * @param range A range.
+     * @param annotation An optional annotation.
+     */
+    delete(range: Range): void
+    delete(range: Range, annotation?: ChangeAnnotation | ChangeAnnotationIdentifier): ChangeAnnotationIdentifier
+  }
+  /**
+   * A workspace change helps constructing changes to a workspace.
+   */
+  export class WorkspaceChange {
+    private _workspaceEdit
+    private _textEditChanges
+    private _changeAnnotations
+    constructor(workspaceEdit?: WorkspaceEdit)
+    /**
+     * Returns the underlying [WorkspaceEdit](#WorkspaceEdit) literal
+     * use to be returned from a workspace edit operation like rename.
+     */
+    get edit(): WorkspaceEdit
+    /**
+     * Returns the [TextEditChange](#TextEditChange) to manage text edits
+     * for resources.
+     */
+    getTextEditChange(textDocument: OptionalVersionedTextDocumentIdentifier): TextEditChange
+    getTextEditChange(uri: DocumentUri): TextEditChange
+    private initDocumentChanges
+    private initChanges
+    createFile(uri: DocumentUri, options?: CreateFileOptions): void
+    createFile(uri: DocumentUri, annotation: ChangeAnnotation | ChangeAnnotationIdentifier, options?: CreateFileOptions): ChangeAnnotationIdentifier
+    renameFile(oldUri: DocumentUri, newUri: DocumentUri, options?: RenameFileOptions): void
+    renameFile(oldUri: DocumentUri, newUri: DocumentUri, annotation?: ChangeAnnotation | ChangeAnnotationIdentifier, options?: RenameFileOptions): ChangeAnnotationIdentifier
+    deleteFile(uri: DocumentUri, options?: DeleteFileOptions): void
+    deleteFile(uri: DocumentUri, annotation: ChangeAnnotation | ChangeAnnotationIdentifier, options?: DeleteFileOptions): ChangeAnnotationIdentifier
+  }
+  /**
+   * A literal to identify a text document in the client.
+   */
+  export interface TextDocumentIdentifier {
+    /**
+     * The text document's uri.
+     */
+    uri: DocumentUri
+  }
+  /**
+   * The TextDocumentIdentifier namespace provides helper functions to work with
+   * [TextDocumentIdentifier](#TextDocumentIdentifier) literals.
+   */
+  export namespace TextDocumentIdentifier {
+    /**
+     * Creates a new TextDocumentIdentifier literal.
+     * @param uri The document's uri.
+     */
+    function create(uri: DocumentUri): TextDocumentIdentifier
+    /**
+     * Checks whether the given literal conforms to the [TextDocumentIdentifier](#TextDocumentIdentifier) interface.
+     */
+    function is(value: any): value is TextDocumentIdentifier
+  }
+  /**
+   * A text document identifier to denote a specific version of a text document.
+   */
+  export interface VersionedTextDocumentIdentifier extends TextDocumentIdentifier {
+    /**
+     * The version number of this document.
+     */
+    version: integer
+  }
+  /**
+   * The VersionedTextDocumentIdentifier namespace provides helper functions to work with
+   * [VersionedTextDocumentIdentifier](#VersionedTextDocumentIdentifier) literals.
+   */
+  export namespace VersionedTextDocumentIdentifier {
+    /**
+     * Creates a new VersionedTextDocumentIdentifier literal.
+     * @param uri The document's uri.
+     * @param version The document's version.
+     */
+    function create(uri: DocumentUri, version: integer): VersionedTextDocumentIdentifier
+    /**
+     * Checks whether the given literal conforms to the [VersionedTextDocumentIdentifier](#VersionedTextDocumentIdentifier) interface.
+     */
+    function is(value: any): value is VersionedTextDocumentIdentifier
+  }
+  /**
+   * A text document identifier to optionally denote a specific version of a text document.
+   */
+  export interface OptionalVersionedTextDocumentIdentifier extends TextDocumentIdentifier {
+    /**
+     * The version number of this document. If a versioned text document identifier
+     * is sent from the server to the client and the file is not open in the editor
+     * (the server has not received an open notification before) the server can send
+     * `null` to indicate that the version is unknown and the content on disk is the
+     * truth (as specified with document content ownership).
+     */
+    version: integer | null
+  }
+  /**
+   * The OptionalVersionedTextDocumentIdentifier namespace provides helper functions to work with
+   * [OptionalVersionedTextDocumentIdentifier](#OptionalVersionedTextDocumentIdentifier) literals.
+   */
+  export namespace OptionalVersionedTextDocumentIdentifier {
+    /**
+     * Creates a new OptionalVersionedTextDocumentIdentifier literal.
+     * @param uri The document's uri.
+     * @param version The document's version.
+     */
+    function create(uri: DocumentUri, version: integer | null): OptionalVersionedTextDocumentIdentifier
+    /**
+     * Checks whether the given literal conforms to the [OptionalVersionedTextDocumentIdentifier](#OptionalVersionedTextDocumentIdentifier) interface.
+     */
+    function is(value: any): value is OptionalVersionedTextDocumentIdentifier
+  }
+  /**
+   * An item to transfer a text document from the client to the
+   * server.
+   */
+  export interface TextDocumentItem {
+    /**
+     * The text document's uri.
+     */
+    uri: DocumentUri
+    /**
+     * The text document's language identifier.
+     */
+    languageId: string
+    /**
+     * The version number of this document (it will increase after each
+     * change, including undo/redo).
+     */
+    version: integer
+    /**
+     * The content of the opened text document.
+     */
+    text: string
+  }
+  /**
+   * The TextDocumentItem namespace provides helper functions to work with
+   * [TextDocumentItem](#TextDocumentItem) literals.
+   */
+  export namespace TextDocumentItem {
+    /**
+     * Creates a new TextDocumentItem literal.
+     * @param uri The document's uri.
+     * @param languageId The document's language identifier.
+     * @param version The document's version number.
+     * @param text The document's text.
+     */
+    function create(uri: DocumentUri, languageId: string, version: integer, text: string): TextDocumentItem
+    /**
+     * Checks whether the given literal conforms to the [TextDocumentItem](#TextDocumentItem) interface.
+     */
+    function is(value: any): value is TextDocumentItem
+  }
   /**
    * Describes the content type that a client supports in various
    * result literals like `Hover`, `ParameterInfo` or `CompletionItem`.
@@ -850,7 +1140,12 @@ declare module 'coc.nvim' {
      * Markdown is supported as a content format
      */
     const Markdown: 'markdown'
+    /**
+     * Checks whether the given value is a value of the [MarkupKind](#MarkupKind) type.
+     */
+    function is(value: any): value is MarkupKind
   }
+  export type MarkupKind = 'plaintext' | 'markdown'
   /**
    * A `MarkupContent` literal represents a string value which content is interpreted base on its
    * kind flag. Currently the protocol supports `plaintext` and `markdown` as markup kinds.
@@ -862,13 +1157,13 @@ declare module 'coc.nvim' {
    * ```ts
    * let markdown: MarkdownContent = {
    *  kind: MarkupKind.Markdown,
-   *	value: [
-   *		'# Header',
-   *		'Some text',
-   *		'```typescript',
-   *		'someCode();',
-   *		'```'
-   *	].join('\n')
+   *  value: [
+   *    '# Header',
+   *    'Some text',
+   *    '```typescript',
+   *    'someCode();',
+   *    '```'
+   *  ].join('\n')
    * };
    * ```
    *
@@ -885,7 +1180,12 @@ declare module 'coc.nvim' {
      */
     value: string
   }
-
+  export namespace MarkupContent {
+    /**
+     * Checks whether the given value conforms to the [MarkupContent](#MarkupContent) interface.
+     */
+    function is(value: any): value is MarkupContent
+  }
   /**
    * The kind of a completion entry.
    */
@@ -916,9 +1216,7 @@ declare module 'coc.nvim' {
     const Operator: 24
     const TypeParameter: 25
   }
-
   export type CompletionItemKind = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25
-
   /**
    * Defines whether the insert text in a completion item should be interpreted as
    * plain text or a snippet.
@@ -936,23 +1234,126 @@ declare module 'coc.nvim' {
      * the end of the snippet. Placeholders with equal identifiers are linked,
      * that is typing in one will update others too.
      *
-     * See also: https://github.com/microsoft/vscode/blob/main/src/vs/editor/contrib/snippet/snippet.md
+     * See also: https://microsoft.github.io/language-server-protocol/specifications/specification-current/#snippet_syntax
      */
     const Snippet: 2
   }
   export type InsertTextFormat = 1 | 2
-
+  /**
+   * Completion item tags are extra annotations that tweak the rendering of a completion
+   * item.
+   *
+   * @since 3.15.0
+   */
+  export namespace CompletionItemTag {
+    /**
+     * Render a completion as obsolete, usually using a strike-out.
+     */
+    const Deprecated = 1
+  }
+  export type CompletionItemTag = 1
+  /**
+   * A special text edit to provide an insert and a replace operation.
+   *
+   * @since 3.16.0
+   */
+  export interface InsertReplaceEdit {
+    /**
+     * The string to be inserted.
+     */
+    newText: string
+    /**
+     * The range if the insert is requested
+     */
+    insert: Range
+    /**
+     * The range if the replace is requested.
+     */
+    replace: Range
+  }
+  /**
+   * The InsertReplaceEdit namespace provides functions to deal with insert / replace edits.
+   *
+   * @since 3.16.0
+   */
+  export namespace InsertReplaceEdit {
+    /**
+     * Creates a new insert / replace edit
+     */
+    function create(newText: string, insert: Range, replace: Range): InsertReplaceEdit
+    /**
+     * Checks whether the given literal conforms to the [InsertReplaceEdit](#InsertReplaceEdit) interface.
+     */
+    function is(value: TextEdit | InsertReplaceEdit): value is InsertReplaceEdit
+  }
+  /**
+   * How whitespace and indentation is handled during completion
+   * item insertion.
+   *
+   * @since 3.16.0
+   */
+  export namespace InsertTextMode {
+    /**
+     * The insertion or replace strings is taken as it is. If the
+     * value is multi line the lines below the cursor will be
+     * inserted using the indentation defined in the string value.
+     * The client will not apply any kind of adjustments to the
+     * string.
+     */
+    const asIs: 1
+    /**
+     * The editor adjusts leading whitespace of new lines so that
+     * they match the indentation up to the cursor of the line for
+     * which the item is accepted.
+     *
+     * Consider a line like this: <2tabs><cursor><3tabs>foo. Accepting a
+     * multi line completion item is indented using 2 tabs and all
+     * following lines inserted will be indented using 2 tabs as well.
+     */
+    const adjustIndentation: 2
+  }
+  export type InsertTextMode = 1 | 2
+  /**
+   * Additional details for a completion item label.
+   *
+   * @since 3.17.0
+   */
+  export interface CompletionItemLabelDetails {
+    /**
+     * An optional string which is rendered less prominently directly after {@link CompletionItem.label label},
+     * without any spacing. Should be used for function signatures and type annotations.
+     */
+    detail?: string
+    /**
+     * An optional string which is rendered less prominently after {@link CompletionItem.detail}. Should be used
+     * for fully qualified names and file paths.
+     */
+    description?: string
+  }
+  export namespace CompletionItemLabelDetails {
+    function is(value: any): value is CompletionItemLabelDetails
+  }
   /**
    * A completion item represents a text snippet that is
    * proposed to complete text that is being typed.
    */
   export interface CompletionItem {
     /**
-     * The label of this completion item. By default
-     * also the text that is inserted when selecting
-     * this completion.
+     * The label of this completion item.
+     *
+     * The label property is also by default the text that
+     * is inserted when selecting this completion.
+     *
+     * If label details are provided the label itself should
+     * be an unqualified name of the completion item.
      */
     label: string
+    /**
+     * Additional details for the label
+     *
+     * @since 3.17.0
+     */
+    labelDetails?: CompletionItemLabelDetails
     /**
      * The kind of this completion item. Based of the kind
      * an icon is chosen by the editor.
@@ -963,7 +1364,7 @@ declare module 'coc.nvim' {
      *
      * @since 3.15.0
      */
-    tags?: number[]
+    tags?: CompletionItemTag[]
     /**
      * A human-readable string with additional information
      * about this item, like type or symbol information.
@@ -1005,27 +1406,66 @@ declare module 'coc.nvim' {
      *
      * The `insertText` is subject to interpretation by the client side.
      * Some tools might not take the string literally. For example
-     * VS Code when code complete is requested in this example `con<cursor position>`
-     * and a completion item with an `insertText` of `console` is provided it
-     * will only insert `sole`. Therefore it is recommended to use `textEdit` instead
-     * since it avoids additional client side interpretation.
+     * VS Code when code complete is requested in this example
+     * `con<cursor position>` and a completion item with an `insertText` of
+     * `console` is provided it will only insert `sole`. Therefore it is
+     * recommended to use `textEdit` instead since it avoids additional client
+     * side interpretation.
      */
     insertText?: string
     /**
-     * The format of the insert text. The format applies to both the `insertText` property
-     * and the `newText` property of a provided `textEdit`. If omitted defaults to
-     * `InsertTextFormat.PlainText`.
+     * The format of the insert text. The format applies to both the
+     * `insertText` property and the `newText` property of a provided
+     * `textEdit`. If omitted defaults to `InsertTextFormat.PlainText`.
+     *
+     * Please note that the insertTextFormat doesn't apply to
+     * `additionalTextEdits`.
      */
     insertTextFormat?: InsertTextFormat
+    /**
+     * How whitespace and indentation is handled during completion
+     * item insertion. If not provided the clients default value depends on
+     * the `textDocument.completion.insertTextMode` client capability.
+     *
+     * @since 3.16.0
+     */
+    insertTextMode?: InsertTextMode
     /**
      * An [edit](#TextEdit) which is applied to a document when selecting
      * this completion. When an edit is provided the value of
      * [insertText](#CompletionItem.insertText) is ignored.
      *
-     * *Note:* The text edit's range must be a [single line] and it must contain the position
+     * Most editors support two different operations when accepting a completion
+     * item. One is to insert a completion text and the other is to replace an
+     * existing text with a completion text. Since this can usually not be
+     * predetermined by a server it can report both ranges. Clients need to
+     * signal support for `InsertReplaceEdits` via the
+     * `textDocument.completion.insertReplaceSupport` client capability
+     * property.
+     *
+     * *Note 1:* The text edit's range as well as both ranges from an insert
+     * replace edit must be a [single line] and they must contain the position
      * at which completion has been requested.
+     * *Note 2:* If an `InsertReplaceEdit` is returned the edit's insert range
+     * must be a prefix of the edit's replace range, that means it must be
+     * contained and starting at the same position.
+     *
+     * @since 3.16.0 additional type `InsertReplaceEdit`
      */
-    textEdit?: TextEdit
+    textEdit?: TextEdit | InsertReplaceEdit
+    /**
+     * The edit text used if the completion item is part of a CompletionList and
+     * CompletionList defines an item default for the text edit range.
+     *
+     * Clients will only honor this property if they opt into completion list
+     * item defaults using the capability `completionList.itemDefaults`.
+     *
+     * If not provided and a list's default range is provided the label
+     * property is used as a text.
+     *
+     * @since 3.17.0
+     */
+    textEditText?: string
     /**
      * An optional array of additional [text edits](#TextEdit) that are applied when
      * selecting this completion. Edits must not overlap (including the same insert position)
@@ -1049,13 +1489,22 @@ declare module 'coc.nvim' {
      */
     command?: Command
     /**
-     * An data entry field that is preserved on a completion item between
-     * a [CompletionRequest](#CompletionRequest) and a [CompletionResolveRequest]
-     * (#CompletionResolveRequest)
+     * A data entry field that is preserved on a completion item between a
+     * [CompletionRequest](#CompletionRequest) and a [CompletionResolveRequest](#CompletionResolveRequest).
      */
-    data?: any
+    data?: LSPAny
   }
-
+  /**
+   * The CompletionItem namespace provides functions to deal with
+   * completion items.
+   */
+  export namespace CompletionItem {
+    /**
+     * Create a completion item and seed it with a label.
+     * @param label The completion item's label
+     */
+    function create(label: string): CompletionItem
+  }
   /**
    * Represents a collection of [completion items](#CompletionItem) to be presented
    * in the editor.
@@ -1063,17 +1512,1678 @@ declare module 'coc.nvim' {
   export interface CompletionList {
     /**
      * This list it not complete. Further typing results in recomputing this list.
+     *
+     * Recomputed lists have all their items replaced (not appended) in the
+     * incomplete completion sessions.
      */
     isIncomplete: boolean
+    /**
+     * In many cases the items of an actual completion result share the same
+     * value for properties like `commitCharacters` or the range of a text
+     * edit. A completion list can therefore define item defaults which will
+     * be used if a completion item itself doesn't specify the value.
+     *
+     * If a completion list specifies a default value and a completion item
+     * also specifies a corresponding value the one from the item is used.
+     *
+     * Servers are only allowed to return default values if the client
+     * signals support for this via the `completionList.itemDefaults`
+     * capability.
+     *
+     * @since 3.17.0
+     */
+    itemDefaults?: {
+      /**
+       * A default commit character set.
+       *
+       * @since 3.17.0
+       */
+      commitCharacters?: string[]
+      /**
+       * A default edit range.
+       *
+       * @since 3.17.0
+       */
+      editRange?: Range | {
+        insert: Range
+        replace: Range
+      }
+      /**
+       * A default insert text format.
+       *
+       * @since 3.17.0
+       */
+      insertTextFormat?: InsertTextFormat
+      /**
+       * A default insert text mode.
+       *
+       * @since 3.17.0
+       */
+      insertTextMode?: InsertTextMode
+      /**
+       * A default data value.
+       *
+       * @since 3.17.0
+       */
+      data?: LSPAny
+    }
     /**
      * The completion items.
      */
     items: CompletionItem[]
   }
+  /**
+   * The CompletionList namespace provides functions to deal with
+   * completion lists.
+   */
+  export namespace CompletionList {
+    /**
+     * Creates a new completion list.
+     *
+     * @param items The completion items.
+     * @param isIncomplete The list is not complete.
+     */
+    function create(items?: CompletionItem[], isIncomplete?: boolean): CompletionList
+  }
+  /**
+   * MarkedString can be used to render human readable text. It is either a markdown string
+   * or a code-block that provides a language and a code snippet. The language identifier
+   * is semantically equal to the optional language identifier in fenced code blocks in GitHub
+   * issues. See https://help.github.com/articles/creating-and-highlighting-code-blocks/#syntax-highlighting
+   *
+   * The pair of a language and a value is an equivalent to markdown:
+   * ```${language}
+   * ${value}
+   * ```
+   *
+   * Note that markdown strings will be sanitized - that means html will be escaped.
+   * @deprecated use MarkupContent instead.
+   */
+  export type MarkedString = string | {
+    language: string
+    value: string
+  }
+  export namespace MarkedString {
+    /**
+     * Creates a marked string from plain text.
+     *
+     * @param plainText The plain text.
+     */
+    function fromPlainText(plainText: string): string
+    /**
+     * Checks whether the given value conforms to the [MarkedString](#MarkedString) type.
+     */
+    function is(value: any): value is MarkedString
+  }
+  /**
+   * The result of a hover request.
+   */
+  export interface Hover {
+    /**
+     * The hover's content
+     */
+    contents: MarkupContent | MarkedString | MarkedString[]
+    /**
+     * An optional range inside the text document that is used to
+     * visualize the hover, e.g. by changing the background color.
+     */
+    range?: Range
+  }
+  export namespace Hover {
+    /**
+     * Checks whether the given value conforms to the [Hover](#Hover) interface.
+     */
+    function is(value: any): value is Hover
+  }
+  /**
+   * Represents a parameter of a callable-signature. A parameter can
+   * have a label and a doc-comment.
+   */
+  export interface ParameterInformation {
+    /**
+     * The label of this parameter information.
+     *
+     * Either a string or an inclusive start and exclusive end offsets within its containing
+     * signature label. (see SignatureInformation.label). The offsets are based on a UTF-16
+     * string representation as `Position` and `Range` does.
+     *
+     * *Note*: a label of type string should be a substring of its containing signature label.
+     * Its intended use case is to highlight the parameter label part in the `SignatureInformation.label`.
+     */
+    label: string | [uinteger, uinteger]
+    /**
+     * The human-readable doc-comment of this parameter. Will be shown
+     * in the UI but can be omitted.
+     */
+    documentation?: string | MarkupContent
+  }
+  /**
+   * The ParameterInformation namespace provides helper functions to work with
+   * [ParameterInformation](#ParameterInformation) literals.
+   */
+  export namespace ParameterInformation {
+    /**
+     * Creates a new parameter information literal.
+     *
+     * @param label A label string.
+     * @param documentation A doc string.
+     */
+    function create(label: string | [uinteger, uinteger], documentation?: string): ParameterInformation
+  }
+  /**
+   * Represents the signature of something callable. A signature
+   * can have a label, like a function-name, a doc-comment, and
+   * a set of parameters.
+   */
+  export interface SignatureInformation {
+    /**
+     * The label of this signature. Will be shown in
+     * the UI.
+     */
+    label: string
+    /**
+     * The human-readable doc-comment of this signature. Will be shown
+     * in the UI but can be omitted.
+     */
+    documentation?: string | MarkupContent
+    /**
+     * The parameters of this signature.
+     */
+    parameters?: ParameterInformation[]
+    /**
+     * The index of the active parameter.
+     *
+     * If provided, this is used in place of `SignatureHelp.activeParameter`.
+     *
+     * @since 3.16.0
+     */
+    activeParameter?: uinteger
+  }
+  /**
+   * The SignatureInformation namespace provides helper functions to work with
+   * [SignatureInformation](#SignatureInformation) literals.
+   */
+  export namespace SignatureInformation {
+    function create(label: string, documentation?: string, ...parameters: ParameterInformation[]): SignatureInformation
+  }
+  /**
+   * Signature help represents the signature of something
+   * callable. There can be multiple signature but only one
+   * active and only one active parameter.
+   */
+  export interface SignatureHelp {
+    /**
+     * One or more signatures.
+     */
+    signatures: SignatureInformation[]
+    /**
+     * The active signature. If omitted or the value lies outside the
+     * range of `signatures` the value defaults to zero or is ignored if
+     * the `SignatureHelp` has no signatures.
+     *
+     * Whenever possible implementors should make an active decision about
+     * the active signature and shouldn't rely on a default value.
+     *
+     * In future version of the protocol this property might become
+     * mandatory to better express this.
+     */
+    activeSignature?: uinteger
+    /**
+     * The active parameter of the active signature. If omitted or the value
+     * lies outside the range of `signatures[activeSignature].parameters`
+     * defaults to 0 if the active signature has parameters. If
+     * the active signature has no parameters it is ignored.
+     * In future version of the protocol this property might become
+     * mandatory to better express the active parameter if the
+     * active signature does have any.
+     */
+    activeParameter?: uinteger
+  }
+  /**
+   * The definition of a symbol represented as one or many [locations](#Location).
+   * For most programming languages there is only one location at which a symbol is
+   * defined.
+   *
+   * Servers should prefer returning `DefinitionLink` over `Definition` if supported
+   * by the client.
+   */
+  export type Definition = Location | Location[]
+  /**
+   * Information about where a symbol is defined.
+   *
+   * Provides additional metadata over normal [location](#Location) definitions, including the range of
+   * the defining symbol
+   */
+  export type DefinitionLink = LocationLink
+  /**
+   * The declaration of a symbol representation as one or many [locations](#Location).
+   */
+  export type Declaration = Location | Location[]
+  /**
+   * Information about where a symbol is declared.
+   *
+   * Provides additional metadata over normal [location](#Location) declarations, including the range of
+   * the declaring symbol.
+   *
+   * Servers should prefer returning `DeclarationLink` over `Declaration` if supported
+   * by the client.
+   */
+  export type DeclarationLink = LocationLink
+  /**
+   * Value-object that contains additional information when
+   * requesting references.
+   */
+  export interface ReferenceContext {
+    /**
+     * Include the declaration of the current symbol.
+     */
+    includeDeclaration: boolean
+  }
+  /**
+   * A document highlight kind.
+   */
+  export namespace DocumentHighlightKind {
+    /**
+     * A textual occurrence.
+     */
+    const Text: 1
+    /**
+     * Read-access of a symbol, like reading a variable.
+     */
+    const Read: 2
+    /**
+     * Write-access of a symbol, like writing to a variable.
+     */
+    const Write: 3
+  }
+  export type DocumentHighlightKind = 1 | 2 | 3
+  /**
+   * A document highlight is a range inside a text document which deserves
+   * special attention. Usually a document highlight is visualized by changing
+   * the background color of its range.
+   */
+  export interface DocumentHighlight {
+    /**
+     * The range this highlight applies to.
+     */
+    range: Range
+    /**
+     * The highlight kind, default is [text](#DocumentHighlightKind.Text).
+     */
+    kind?: DocumentHighlightKind
+  }
+  /**
+   * DocumentHighlight namespace to provide helper functions to work with
+   * [DocumentHighlight](#DocumentHighlight) literals.
+   */
+  export namespace DocumentHighlight {
+    /**
+     * Create a DocumentHighlight object.
+     * @param range The range the highlight applies to.
+     * @param kind The highlight kind
+     */
+    function create(range: Range, kind?: DocumentHighlightKind): DocumentHighlight
+  }
+  /**
+   * A symbol kind.
+   */
+  export namespace SymbolKind {
+    const File: 1
+    const Module: 2
+    const Namespace: 3
+    const Package: 4
+    const Class: 5
+    const Method: 6
+    const Property: 7
+    const Field: 8
+    const Constructor: 9
+    const Enum: 10
+    const Interface: 11
+    const Function: 12
+    const Variable: 13
+    const Constant: 14
+    const String: 15
+    const Number: 16
+    const Boolean: 17
+    const Array: 18
+    const Object: 19
+    const Key: 20
+    const Null: 21
+    const EnumMember: 22
+    const Struct: 23
+    const Event: 24
+    const Operator: 25
+    const TypeParameter: 26
+  }
+  export type SymbolKind = 1 | 2 | 3 | 4 | 5 | 6 | 7 | 8 | 9 | 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19 | 20 | 21 | 22 | 23 | 24 | 25 | 26
+  /**
+   * Symbol tags are extra annotations that tweak the rendering of a symbol.
+   *
+   * @since 3.16
+   */
+  export namespace SymbolTag {
+    /**
+     * Render a symbol as obsolete, usually using a strike-out.
+     */
+    const Deprecated: 1
+  }
+  export type SymbolTag = 1
+  /**
+   * A base for all symbol information.
+   */
+  export interface BaseSymbolInformation {
+    /**
+     * The name of this symbol.
+     */
+    name: string
+    /**
+     * The kind of this symbol.
+     */
+    kind: SymbolKind
+    /**
+     * Tags for this symbol.
+     *
+     * @since 3.16.0
+     */
+    tags?: SymbolTag[]
+    /**
+     * The name of the symbol containing this symbol. This information is for
+     * user interface purposes (e.g. to render a qualifier in the user interface
+     * if necessary). It can't be used to re-infer a hierarchy for the document
+     * symbols.
+     */
+    containerName?: string
+  }
+  /**
+   * Represents information about programming constructs like variables, classes,
+   * interfaces etc.
+   */
+  export interface SymbolInformation extends BaseSymbolInformation {
+    /**
+     * Indicates if this symbol is deprecated.
+     *
+     * @deprecated Use tags instead
+     */
+    deprecated?: boolean
+    /**
+     * The location of this symbol. The location's range is used by a tool
+     * to reveal the location in the editor. If the symbol is selected in the
+     * tool the range's start information is used to position the cursor. So
+     * the range usually spans more than the actual symbol's name and does
+     * normally include things like visibility modifiers.
+     *
+     * The range doesn't have to denote a node range in the sense of an abstract
+     * syntax tree. It can therefore not be used to re-construct a hierarchy of
+     * the symbols.
+     */
+    location: Location
+  }
+  export namespace SymbolInformation {
+    /**
+     * Creates a new symbol information literal.
+     *
+     * @param name The name of the symbol.
+     * @param kind The kind of the symbol.
+     * @param range The range of the location of the symbol.
+     * @param uri The resource of the location of symbol.
+     * @param containerName The name of the symbol containing the symbol.
+     */
+    function create(name: string, kind: SymbolKind, range: Range, uri: DocumentUri, containerName?: string): SymbolInformation
+  }
+  /**
+   * A special workspace symbol that supports locations without a range.
+   *
+   * See also SymbolInformation.
+   *
+   * @since 3.17.0
+   */
+  export interface WorkspaceSymbol extends BaseSymbolInformation {
+    /**
+     * The location of the symbol. Whether a server is allowed to
+     * return a location without a range depends on the client
+     * capability `workspace.symbol.resolveSupport`.
+     *
+     * See SymbolInformation#location for more details.
+     */
+    location: Location | {
+      uri: DocumentUri
+    }
+    /**
+     * A data entry field that is preserved on a workspace symbol between a
+     * workspace symbol request and a workspace symbol resolve request.
+     */
+    data?: LSPAny
+  }
+  export namespace WorkspaceSymbol {
+    /**
+     * Create a new workspace symbol.
+     *
+     * @param name The name of the symbol.
+     * @param kind The kind of the symbol.
+     * @param uri The resource of the location of the symbol.
+     * @param range An options range of the location.
+     * @returns A WorkspaceSymbol.
+     */
+    function create(name: string, kind: SymbolKind, uri: DocumentUri, range?: Range): WorkspaceSymbol
+  }
+  /**
+   * Represents programming constructs like variables, classes, interfaces etc.
+   * that appear in a document. Document symbols can be hierarchical and they
+   * have two ranges: one that encloses its definition and one that points to
+   * its most interesting range, e.g. the range of an identifier.
+   */
+  export interface DocumentSymbol {
+    /**
+     * The name of this symbol. Will be displayed in the user interface and therefore must not be
+     * an empty string or a string only consisting of white spaces.
+     */
+    name: string
+    /**
+     * More detail for this symbol, e.g the signature of a function.
+     */
+    detail?: string
+    /**
+     * The kind of this symbol.
+     */
+    kind: SymbolKind
+    /**
+     * Tags for this document symbol.
+     *
+     * @since 3.16.0
+     */
+    tags?: SymbolTag[]
+    /**
+     * Indicates if this symbol is deprecated.
+     *
+     * @deprecated Use tags instead
+     */
+    deprecated?: boolean
+    /**
+     * The range enclosing this symbol not including leading/trailing whitespace but everything else
+     * like comments. This information is typically used to determine if the clients cursor is
+     * inside the symbol to reveal in the symbol in the UI.
+     */
+    range: Range
+    /**
+     * The range that should be selected and revealed when this symbol is being picked, e.g the name of a function.
+     * Must be contained by the `range`.
+     */
+    selectionRange: Range
+    /**
+     * Children of this symbol, e.g. properties of a class.
+     */
+    children?: DocumentSymbol[]
+  }
+  export namespace DocumentSymbol {
+    /**
+     * Creates a new symbol information literal.
+     *
+     * @param name The name of the symbol.
+     * @param detail The detail of the symbol.
+     * @param kind The kind of the symbol.
+     * @param range The range of the symbol.
+     * @param selectionRange The selectionRange of the symbol.
+     * @param children Children of the symbol.
+     */
+    function create(name: string, detail: string | undefined, kind: SymbolKind, range: Range, selectionRange: Range, children?: DocumentSymbol[]): DocumentSymbol
+    /**
+     * Checks whether the given literal conforms to the [DocumentSymbol](#DocumentSymbol) interface.
+     */
+    function is(value: any): value is DocumentSymbol
+  }
+  /**
+   * The kind of a code action.
+   *
+   * Kinds are a hierarchical list of identifiers separated by `.`, e.g. `"refactor.extract.function"`.
+   *
+   * The set of kinds is open and client needs to announce the kinds it supports to the server during
+   * initialization.
+   */
+  export type CodeActionKind = string
+  /**
+   * A set of predefined code action kinds
+   */
+  export namespace CodeActionKind {
+    /**
+     * Empty kind.
+     */
+    const Empty: ''
+    /**
+     * Base kind for quickfix actions: 'quickfix'
+     */
+    const QuickFix: 'quickfix'
+    /**
+     * Base kind for refactoring actions: 'refactor'
+     */
+    const Refactor: 'refactor'
+    /**
+     * Base kind for refactoring extraction actions: 'refactor.extract'
+     *
+     * Example extract actions:
+     *
+     * - Extract method
+     * - Extract function
+     * - Extract variable
+     * - Extract interface from class
+     * - ...
+     */
+    const RefactorExtract: 'refactor.extract'
+    /**
+     * Base kind for refactoring inline actions: 'refactor.inline'
+     *
+     * Example inline actions:
+     *
+     * - Inline function
+     * - Inline variable
+     * - Inline constant
+     * - ...
+     */
+    const RefactorInline: 'refactor.inline'
+    /**
+     * Base kind for refactoring rewrite actions: 'refactor.rewrite'
+     *
+     * Example rewrite actions:
+     *
+     * - Convert JavaScript function to class
+     * - Add or remove parameter
+     * - Encapsulate field
+     * - Make method static
+     * - Move method to base class
+     * - ...
+     */
+    const RefactorRewrite: 'refactor.rewrite'
+    /**
+     * Base kind for source actions: `source`
+     *
+     * Source code actions apply to the entire file.
+     */
+    const Source: 'source'
+    /**
+     * Base kind for an organize imports source action: `source.organizeImports`
+     */
+    const SourceOrganizeImports: 'source.organizeImports'
+    /**
+     * Base kind for auto-fix source actions: `source.fixAll`.
+     *
+     * Fix all actions automatically fix errors that have a clear fix that do not require user input.
+     * They should not suppress errors or perform unsafe fixes such as generating new types or classes.
+     *
+     * @since 3.15.0
+     */
+    const SourceFixAll: 'source.fixAll'
+  }
+  /**
+   * The reason why code actions were requested.
+   *
+   * @since 3.17.0
+   */
+  export namespace CodeActionTriggerKind {
+    /**
+     * Code actions were explicitly requested by the user or by an extension.
+     */
+    const Invoked: 1
+    /**
+     * Code actions were requested automatically.
+     *
+     * This typically happens when current selection in a file changes, but can
+     * also be triggered when file content changes.
+     */
+    const Automatic: 2
+  }
+  export type CodeActionTriggerKind = 1 | 2
+  /**
+   * Contains additional diagnostic information about the context in which
+   * a [code action](#CodeActionProvider.provideCodeActions) is run.
+   */
+  export interface CodeActionContext {
+    /**
+     * An array of diagnostics known on the client side overlapping the range provided to the
+     * `textDocument/codeAction` request. They are provided so that the server knows which
+     * errors are currently presented to the user for the given range. There is no guarantee
+     * that these accurately reflect the error state of the resource. The primary parameter
+     * to compute code actions is the provided range.
+     */
+    diagnostics: Diagnostic[]
+    /**
+     * Requested kind of actions to return.
+     *
+     * Actions not of this kind are filtered out by the client before being shown. So servers
+     * can omit computing them.
+     */
+    only?: CodeActionKind[]
+    /**
+     * The reason why code actions were requested.
+     *
+     * @since 3.17.0
+     */
+    triggerKind?: CodeActionTriggerKind
+  }
+  /**
+   * The CodeActionContext namespace provides helper functions to work with
+   * [CodeActionContext](#CodeActionContext) literals.
+   */
+  export namespace CodeActionContext {
+    /**
+     * Creates a new CodeActionContext literal.
+     */
+    function create(diagnostics: Diagnostic[], only?: CodeActionKind[], triggerKind?: CodeActionTriggerKind): CodeActionContext
+    /**
+     * Checks whether the given literal conforms to the [CodeActionContext](#CodeActionContext) interface.
+     */
+    function is(value: any): value is CodeActionContext
+  }
+  /**
+   * A code action represents a change that can be performed in code, e.g. to fix a problem or
+   * to refactor code.
+   *
+   * A CodeAction must set either `edit` and/or a `command`. If both are supplied, the `edit` is applied first, then the `command` is executed.
+   */
+  export interface CodeAction {
+    /**
+     * A short, human-readable, title for this code action.
+     */
+    title: string
+    /**
+     * The kind of the code action.
+     *
+     * Used to filter code actions.
+     */
+    kind?: CodeActionKind
+    /**
+     * The diagnostics that this code action resolves.
+     */
+    diagnostics?: Diagnostic[]
+    /**
+     * Marks this as a preferred action. Preferred actions are used by the `auto fix` command and can be targeted
+     * by keybindings.
+     *
+     * A quick fix should be marked preferred if it properly addresses the underlying error.
+     * A refactoring should be marked preferred if it is the most reasonable choice of actions to take.
+     *
+     * @since 3.15.0
+     */
+    isPreferred?: boolean
+    /**
+     * Marks that the code action cannot currently be applied.
+     *
+     * Clients should follow the following guidelines regarding disabled code actions:
+     *
+     *   - Disabled code actions are not shown in automatic [lightbulbs](https://code.visualstudio.com/docs/editor/editingevolved#_code-action)
+     *     code action menus.
+     *
+     *   - Disabled actions are shown as faded out in the code action menu when the user requests a more specific type
+     *     of code action, such as refactorings.
+     *
+     *   - If the user has a [keybinding](https://code.visualstudio.com/docs/editor/refactoring#_keybindings-for-code-actions)
+     *     that auto applies a code action and only disabled code actions are returned, the client should show the user an
+     *     error message with `reason` in the editor.
+     *
+     * @since 3.16.0
+     */
+    disabled?: {
+      /**
+       * Human readable description of why the code action is currently disabled.
+       *
+       * This is displayed in the code actions UI.
+       */
+      reason: string
+    }
+    /**
+     * The workspace edit this code action performs.
+     */
+    edit?: WorkspaceEdit
+    /**
+     * A command this code action executes. If a code action
+     * provides an edit and a command, first the edit is
+     * executed and then the command.
+     */
+    command?: Command
+    /**
+     * A data entry field that is preserved on a code action between
+     * a `textDocument/codeAction` and a `codeAction/resolve` request.
+     *
+     * @since 3.16.0
+     */
+    data?: LSPAny
+  }
+  export namespace CodeAction {
+    /**
+     * Creates a new code action.
+     *
+     * @param title The title of the code action.
+     * @param kind The kind of the code action.
+     */
+    function create(title: string, kind?: CodeActionKind): CodeAction
+    /**
+     * Creates a new code action.
+     *
+     * @param title The title of the code action.
+     * @param command The command to execute.
+     * @param kind The kind of the code action.
+     */
+    function create(title: string, command: Command, kind?: CodeActionKind): CodeAction
+    /**
+     * Creates a new code action.
+     *
+     * @param title The title of the code action.
+     * @param edit The edit to perform.
+     * @param kind The kind of the code action.
+     */
+    function create(title: string, edit: WorkspaceEdit, kind?: CodeActionKind): CodeAction
+    function is(value: any): value is CodeAction
+  }
+  /**
+   * A code lens represents a [command](#Command) that should be shown along with
+   * source text, like the number of references, a way to run tests, etc.
+   *
+   * A code lens is _unresolved_ when no command is associated to it. For performance
+   * reasons the creation of a code lens and resolving should be done in two stages.
+   */
+  export interface CodeLens {
+    /**
+     * The range in which this code lens is valid. Should only span a single line.
+     */
+    range: Range
+    /**
+     * The command this code lens represents.
+     */
+    command?: Command
+    /**
+     * A data entry field that is preserved on a code lens item between
+     * a [CodeLensRequest](#CodeLensRequest) and a [CodeLensResolveRequest]
+     * (#CodeLensResolveRequest)
+     */
+    data?: LSPAny
+  }
+  /**
+   * The CodeLens namespace provides helper functions to work with
+   * [CodeLens](#CodeLens) literals.
+   */
+  export namespace CodeLens {
+    /**
+     * Creates a new CodeLens literal.
+     */
+    function create(range: Range, data?: LSPAny): CodeLens
+    /**
+     * Checks whether the given literal conforms to the [CodeLens](#CodeLens) interface.
+     */
+    function is(value: any): value is CodeLens
+  }
+  /**
+   * Value-object describing what options formatting should use.
+   */
+  export interface FormattingOptions {
+    /**
+     * Size of a tab in spaces.
+     */
+    tabSize: uinteger
+    /**
+     * Prefer spaces over tabs.
+     */
+    insertSpaces: boolean
+    /**
+     * Trim trailing whitespace on a line.
+     *
+     * @since 3.15.0
+     */
+    trimTrailingWhitespace?: boolean
+    /**
+     * Insert a newline character at the end of the file if one does not exist.
+     *
+     * @since 3.15.0
+     */
+    insertFinalNewline?: boolean
+    /**
+     * Trim all newlines after the final newline at the end of the file.
+     *
+     * @since 3.15.0
+     */
+    trimFinalNewlines?: boolean
+    /**
+     * Signature for further properties.
+     */
+    [key: string]: boolean | integer | string | undefined
+  }
+  /**
+   * The FormattingOptions namespace provides helper functions to work with
+   * [FormattingOptions](#FormattingOptions) literals.
+   */
+  export namespace FormattingOptions {
+    /**
+     * Creates a new FormattingOptions literal.
+     */
+    function create(tabSize: uinteger, insertSpaces: boolean): FormattingOptions
+    /**
+     * Checks whether the given literal conforms to the [FormattingOptions](#FormattingOptions) interface.
+     */
+    function is(value: any): value is FormattingOptions
+  }
+  /**
+   * A document link is a range in a text document that links to an internal or external resource, like another
+   * text document or a web site.
+   */
+  export interface DocumentLink {
+    /**
+     * The range this link applies to.
+     */
+    range: Range
+    /**
+     * The uri this link points to. If missing a resolve request is sent later.
+     */
+    target?: string
+    /**
+     * The tooltip text when you hover over this link.
+     *
+     * If a tooltip is provided, is will be displayed in a string that includes instructions on how to
+     * trigger the link, such as `{0} (ctrl + click)`. The specific instructions vary depending on OS,
+     * user settings, and localization.
+     *
+     * @since 3.15.0
+     */
+    tooltip?: string
+    /**
+     * A data entry field that is preserved on a document link between a
+     * DocumentLinkRequest and a DocumentLinkResolveRequest.
+     */
+    data?: LSPAny
+  }
+  /**
+   * The DocumentLink namespace provides helper functions to work with
+   * [DocumentLink](#DocumentLink) literals.
+   */
+  export namespace DocumentLink {
+    /**
+     * Creates a new DocumentLink literal.
+     */
+    function create(range: Range, target?: string, data?: LSPAny): DocumentLink
+    /**
+     * Checks whether the given literal conforms to the [DocumentLink](#DocumentLink) interface.
+     */
+    function is(value: any): value is DocumentLink
+  }
+  /**
+   * A selection range represents a part of a selection hierarchy. A selection range
+   * may have a parent selection range that contains it.
+   */
+  export interface SelectionRange {
+    /**
+     * The [range](#Range) of this selection range.
+     */
+    range: Range
+    /**
+     * The parent selection range containing this range. Therefore `parent.range` must contain `this.range`.
+     */
+    parent?: SelectionRange
+  }
+  /**
+   * The SelectionRange namespace provides helper function to work with
+   * SelectionRange literals.
+   */
+  export namespace SelectionRange {
+    /**
+     * Creates a new SelectionRange
+     * @param range the range.
+     * @param parent an optional parent.
+     */
+    function create(range: Range, parent?: SelectionRange): SelectionRange
+    function is(value: any): value is SelectionRange
+  }
+  /**
+   * Represents programming constructs like functions or constructors in the context
+   * of call hierarchy.
+   *
+   * @since 3.16.0
+   */
+  export interface CallHierarchyItem {
+    /**
+     * The name of this item.
+     */
+    name: string
+    /**
+     * The kind of this item.
+     */
+    kind: SymbolKind
+    /**
+     * Tags for this item.
+     */
+    tags?: SymbolTag[]
+    /**
+     * More detail for this item, e.g. the signature of a function.
+     */
+    detail?: string
+    /**
+     * The resource identifier of this item.
+     */
+    uri: DocumentUri
+    /**
+     * The range enclosing this symbol not including leading/trailing whitespace but everything else, e.g. comments and code.
+     */
+    range: Range
+    /**
+     * The range that should be selected and revealed when this symbol is being picked, e.g. the name of a function.
+     * Must be contained by the [`range`](#CallHierarchyItem.range).
+     */
+    selectionRange: Range
+    /**
+     * A data entry field that is preserved between a call hierarchy prepare and
+     * incoming calls or outgoing calls requests.
+     */
+    data?: LSPAny
+  }
+  /**
+   * Represents an incoming call, e.g. a caller of a method or constructor.
+   *
+   * @since 3.16.0
+   */
+  export interface CallHierarchyIncomingCall {
+    /**
+     * The item that makes the call.
+     */
+    from: CallHierarchyItem
+    /**
+     * The ranges at which the calls appear. This is relative to the caller
+     * denoted by [`this.from`](#CallHierarchyIncomingCall.from).
+     */
+    fromRanges: Range[]
+  }
+  /**
+   * Represents an outgoing call, e.g. calling a getter from a method or a method from a constructor etc.
+   *
+   * @since 3.16.0
+   */
+  export interface CallHierarchyOutgoingCall {
+    /**
+     * The item that is called.
+     */
+    to: CallHierarchyItem
+    /**
+     * The range at which this item is called. This is the range relative to the caller, e.g the item
+     * passed to [`provideCallHierarchyOutgoingCalls`](#CallHierarchyItemProvider.provideCallHierarchyOutgoingCalls)
+     * and not [`this.to`](#CallHierarchyOutgoingCall.to).
+     */
+    fromRanges: Range[]
+  }
+  /**
+   * A set of predefined token types. This set is not fixed
+   * an clients can specify additional token types via the
+   * corresponding client capabilities.
+   *
+   * @since 3.16.0
+   */
+  export enum SemanticTokenTypes {
+    namespace = "namespace",
+    /**
+     * Represents a generic type. Acts as a fallback for types which can't be mapped to
+     * a specific type like class or enum.
+     */
+    type = "type",
+    class = "class",
+    enum = "enum",
+    interface = "interface",
+    struct = "struct",
+    typeParameter = "typeParameter",
+    parameter = "parameter",
+    variable = "variable",
+    property = "property",
+    enumMember = "enumMember",
+    event = "event",
+    function = "function",
+    method = "method",
+    macro = "macro",
+    keyword = "keyword",
+    modifier = "modifier",
+    comment = "comment",
+    string = "string",
+    number = "number",
+    regexp = "regexp",
+    operator = "operator",
+    /**
+     * @since 3.17.0
+     */
+    decorator = "decorator"
+  }
+  /**
+   * A set of predefined token modifiers. This set is not fixed
+   * an clients can specify additional token types via the
+   * corresponding client capabilities.
+   *
+   * @since 3.16.0
+   */
+  export enum SemanticTokenModifiers {
+    declaration = "declaration",
+    definition = "definition",
+    readonly = "readonly",
+    static = "static",
+    deprecated = "deprecated",
+    abstract = "abstract",
+    async = "async",
+    modification = "modification",
+    documentation = "documentation",
+    defaultLibrary = "defaultLibrary"
+  }
+  /**
+   * @since 3.16.0
+   */
+  export interface SemanticTokensLegend {
+    /**
+     * The token types a server uses.
+     */
+    tokenTypes: string[]
+    /**
+     * The token modifiers a server uses.
+     */
+    tokenModifiers: string[]
+  }
+  /**
+   * @since 3.16.0
+   */
+  export interface SemanticTokens {
+    /**
+     * An optional result id. If provided and clients support delta updating
+     * the client will include the result id in the next semantic token request.
+     * A server can then instead of computing all semantic tokens again simply
+     * send a delta.
+     */
+    resultId?: string
+    /**
+     * The actual tokens.
+     */
+    data: uinteger[]
+  }
+  /**
+   * @since 3.16.0
+   */
+  export namespace SemanticTokens {
+    function is(value: any): value is SemanticTokens
+  }
+  /**
+   * @since 3.16.0
+   */
+  export interface SemanticTokensEdit {
+    /**
+     * The start offset of the edit.
+     */
+    start: uinteger
+    /**
+     * The count of elements to remove.
+     */
+    deleteCount: uinteger
+    /**
+     * The elements to insert.
+     */
+    data?: uinteger[]
+  }
+  /**
+   * @since 3.16.0
+   */
+  export interface SemanticTokensDelta {
+    readonly resultId?: string
+    /**
+     * The semantic token edits to transform a previous result into a new result.
+     */
+    edits: SemanticTokensEdit[]
+  }
+  /**
+   * @since 3.17.0
+   */
+  export type TypeHierarchyItem = {
+    /**
+     * The name of this item.
+     */
+    name: string
+    /**
+     * The kind of this item.
+     */
+    kind: SymbolKind
+    /**
+     * Tags for this item.
+     */
+    tags?: SymbolTag[]
+    /**
+     * More detail for this item, e.g. the signature of a function.
+     */
+    detail?: string
+    /**
+     * The resource identifier of this item.
+     */
+    uri: DocumentUri
+    /**
+     * The range enclosing this symbol not including leading/trailing whitespace
+     * but everything else, e.g. comments and code.
+     */
+    range: Range
+    /**
+     * The range that should be selected and revealed when this symbol is being
+     * picked, e.g. the name of a function. Must be contained by the
+     * [`range`](#TypeHierarchyItem.range).
+     */
+    selectionRange: Range
+    /**
+     * A data entry field that is preserved between a type hierarchy prepare and
+     * supertypes or subtypes requests. It could also be used to identify the
+     * type hierarchy in the server, helping improve the performance on
+     * resolving supertypes and subtypes.
+     */
+    data?: LSPAny
+  }
 
   /**
- * How a completion was triggered
- */
+   * Provide inline value as text.
+   *
+   * @since 3.17.0
+   */
+  export type InlineValueText = {
+    /**
+     * The document range for which the inline value applies.
+     */
+    range: Range
+    /**
+     * The text of the inline value.
+     */
+    text: string
+  }
+  /**
+   * The InlineValueText namespace provides functions to deal with InlineValueTexts.
+   *
+   * @since 3.17.0
+   */
+  export namespace InlineValueText {
+    /**
+     * Creates a new InlineValueText literal.
+     */
+    function create(range: Range, text: string): InlineValueText
+    function is(value: InlineValue | undefined | null): value is InlineValueText
+  }
+  /**
+   * Provide inline value through a variable lookup.
+   * If only a range is specified, the variable name will be extracted from the underlying document.
+   * An optional variable name can be used to override the extracted name.
+   *
+   * @since 3.17.0
+   */
+  export type InlineValueVariableLookup = {
+    /**
+     * The document range for which the inline value applies.
+     * The range is used to extract the variable name from the underlying document.
+     */
+    range: Range
+    /**
+     * If specified the name of the variable to look up.
+     */
+    variableName?: string
+    /**
+     * How to perform the lookup.
+     */
+    caseSensitiveLookup: boolean
+  }
+  /**
+   * The InlineValueVariableLookup namespace provides functions to deal with InlineValueVariableLookups.
+   *
+   * @since 3.17.0
+   */
+  export namespace InlineValueVariableLookup {
+    /**
+     * Creates a new InlineValueText literal.
+     */
+    function create(range: Range, variableName: string | undefined, caseSensitiveLookup: boolean): InlineValueVariableLookup
+    function is(value: InlineValue | undefined | null): value is InlineValueVariableLookup
+  }
+  /**
+   * Provide an inline value through an expression evaluation.
+   * If only a range is specified, the expression will be extracted from the underlying document.
+   * An optional expression can be used to override the extracted expression.
+   *
+   * @since 3.17.0
+   */
+  export type InlineValueEvaluatableExpression = {
+    /**
+     * The document range for which the inline value applies.
+     * The range is used to extract the evaluatable expression from the underlying document.
+     */
+    range: Range
+    /**
+     * If specified the expression overrides the extracted expression.
+     */
+    expression?: string
+  }
+  /**
+   * The InlineValueEvaluatableExpression namespace provides functions to deal with InlineValueEvaluatableExpression.
+   *
+   * @since 3.17.0
+   */
+  export namespace InlineValueEvaluatableExpression {
+    /**
+     * Creates a new InlineValueEvaluatableExpression literal.
+     */
+    function create(range: Range, expression: string | undefined): InlineValueEvaluatableExpression
+    function is(value: InlineValue | undefined | null): value is InlineValueEvaluatableExpression
+  }
+  /**
+   * Inline value information can be provided by different means:
+   * - directly as a text value (class InlineValueText).
+   * - as a name to use for a variable lookup (class InlineValueVariableLookup)
+   * - as an evaluatable expression (class InlineValueEvaluatableExpression)
+   * The InlineValue types combines all inline value types into one type.
+   *
+   * @since 3.17.0
+   */
+  export type InlineValue = InlineValueText | InlineValueVariableLookup | InlineValueEvaluatableExpression
+  /**
+   * @since 3.17.0
+   */
+  export type InlineValueContext = {
+    /**
+     * The stack frame (as a DAP Id) where the execution has stopped.
+     */
+    frameId: integer
+    /**
+     * The document range where execution has stopped.
+     * Typically the end position of the range denotes the line where the inline values are shown.
+     */
+    stoppedLocation: Range
+  }
+  /**
+   * The InlineValueContext namespace provides helper functions to work with
+   * [InlineValueContext](#InlineValueContext) literals.
+   *
+   * @since 3.17.0
+   */
+  export namespace InlineValueContext {
+    /**
+     * Creates a new InlineValueContext literal.
+     */
+    function create(frameId: integer, stoppedLocation: Range): InlineValueContext
+    /**
+     * Checks whether the given literal conforms to the [InlineValueContext](#InlineValueContext) interface.
+     */
+    function is(value: any): value is InlineValueContext
+  }
+  /**
+   * Inlay hint kinds.
+   *
+   * @since 3.17.0
+   */
+  export namespace InlayHintKind {
+    /**
+     * An inlay hint that for a type annotation.
+     */
+    const Type = 1
+    /**
+     * An inlay hint that is for a parameter.
+     */
+    const Parameter = 2
+    function is(value: number): value is InlayHintKind
+  }
+  export type InlayHintKind = 1 | 2
+  /**
+   * An inlay hint label part allows for interactive and composite labels
+   * of inlay hints.
+   *
+   * @since 3.17.0
+   */
+  export type InlayHintLabelPart = {
+    /**
+     * The value of this label part.
+     */
+    value: string
+    /**
+     * The tooltip text when you hover over this label part. Depending on
+     * the client capability `inlayHint.resolveSupport` clients might resolve
+     * this property late using the resolve request.
+     */
+    tooltip?: string | MarkupContent
+    /**
+     * An optional source code location that represents this
+     * label part.
+     *
+     * The editor will use this location for the hover and for code navigation
+     * features: This part will become a clickable link that resolves to the
+     * definition of the symbol at the given location (not necessarily the
+     * location itself), it shows the hover that shows at the given location,
+     * and it shows a context menu with further code navigation commands.
+     *
+     * Depending on the client capability `inlayHint.resolveSupport` clients
+     * might resolve this property late using the resolve request.
+     */
+    location?: Location
+    /**
+     * An optional command for this label part.
+     *
+     * Depending on the client capability `inlayHint.resolveSupport` clients
+     * might resolve this property late using the resolve request.
+     */
+    command?: Command
+  }
+  export namespace InlayHintLabelPart {
+    function create(value: string): InlayHintLabelPart
+    function is(value: any): value is InlayHintLabelPart
+  }
+  /**
+   * Inlay hint information.
+   *
+   * @since 3.17.0
+   */
+  export type InlayHint = {
+    /**
+     * The position of this hint.
+     */
+    position: Position
+    /**
+     * The label of this hint. A human readable string or an array of
+     * InlayHintLabelPart label parts.
+     *
+     * *Note* that neither the string nor the label part can be empty.
+     */
+    label: string | InlayHintLabelPart[]
+    /**
+     * The kind of this hint. Can be omitted in which case the client
+     * should fall back to a reasonable default.
+     */
+    kind?: InlayHintKind
+    /**
+     * Optional text edits that are performed when accepting this inlay hint.
+     *
+     * *Note* that edits are expected to change the document so that the inlay
+     * hint (or its nearest variant) is now part of the document and the inlay
+     * hint itself is now obsolete.
+     */
+    textEdits?: TextEdit[]
+    /**
+     * The tooltip text when you hover over this item.
+     */
+    tooltip?: string | MarkupContent
+    /**
+     * Render padding before the hint.
+     *
+     * Note: Padding should use the editor's background color, not the
+     * background color of the hint itself. That means padding can be used
+     * to visually align/separate an inlay hint.
+     */
+    paddingLeft?: boolean
+    /**
+     * Render padding after the hint.
+     *
+     * Note: Padding should use the editor's background color, not the
+     * background color of the hint itself. That means padding can be used
+     * to visually align/separate an inlay hint.
+     */
+    paddingRight?: boolean
+    /**
+     * A data entry field that is preserved on an inlay hint between
+     * a `textDocument/inlayHint` and a `inlayHint/resolve` request.
+     */
+    data?: LSPAny
+  }
+  export namespace InlayHint {
+    function create(position: Position, label: string | InlayHintLabelPart[], kind?: InlayHintKind): InlayHint
+    function is(value: any): value is InlayHint
+  }
+  /**
+   * A workspace folder inside a client.
+   */
+  export interface WorkspaceFolder {
+    /**
+     * The associated URI for this workspace folder.
+     */
+    uri: string
+    /**
+     * The name of the workspace folder. Used to refer to this
+     * workspace folder in the user interface.
+     */
+    name: string
+  }
+  export namespace WorkspaceFolder {
+    function is(value: any): value is WorkspaceFolder
+  }
+  export const EOL: string[]
+  /**
+   * A simple text document. Not to be implemented. The document keeps the content
+   * as string.
+   */
+  export interface TextDocument {
+    /**
+     * The associated URI for this document. Most documents have the __file__-scheme, indicating that they
+     * represent files on disk. However, some documents may have other schemes indicating that they are not
+     * available on disk.
+     *
+     * @readonly
+     */
+    readonly uri: DocumentUri
+    /**
+     * The identifier of the language associated with this document.
+     *
+     * @readonly
+     */
+    readonly languageId: string
+    /**
+     * The version number of this document (it will increase after each
+     * change, including undo/redo).
+     *
+     * @readonly
+     */
+    readonly version: integer
+    /**
+     * Get the text of this document. A substring can be retrieved by
+     * providing a range.
+     *
+     * @param range (optional) An range within the document to return.
+     * If no range is passed, the full content is returned.
+     * Invalid range positions are adjusted as described in [Position.line](#Position.line)
+     * and [Position.character](#Position.character).
+     * If the start range position is greater than the end range position,
+     * then the effect of getText is as if the two positions were swapped.
+
+     * @return The text of this document or a substring of the text if a
+     *         range is provided.
+     */
+    getText(range?: Range): string
+    /**
+     * Converts a zero-based offset to a position.
+     *
+     * @param offset A zero-based offset.
+     * @return A valid [position](#Position).
+     */
+    positionAt(offset: uinteger): Position
+    /**
+     * Converts the position to a zero-based offset.
+     * Invalid positions are adjusted as described in [Position.line](#Position.line)
+     * and [Position.character](#Position.character).
+     *
+     * @param position A position.
+     * @return A valid zero-based offset.
+     */
+    offsetAt(position: Position): uinteger
+    /**
+     * The number of lines in this document.
+     *
+     * @readonly
+     */
+    readonly lineCount: uinteger
+  }
+  // }}
+
+  // Language server protocol interfaces {{
+  export interface Thenable<T> {
+    then<TResult>(onfulfilled?: (value: T) => TResult | Thenable<TResult>, onrejected?: (reason: any) => TResult | Thenable<TResult>): Thenable<TResult>
+    // eslint-disable-next-line @typescript-eslint/unified-signatures
+    then<TResult>(onfulfilled?: (value: T) => TResult | Thenable<TResult>, onrejected?: (reason: any) => void): Thenable<TResult>
+  }
+
+  export interface Disposable {
+    /**
+     * Dispose this object.
+     */
+    dispose(): void
+  }
+
+  export namespace Disposable {
+    function create(func: () => void): Disposable
+  }
+
+  /**
+   * A parameter literal used in requests to pass a text document and a position inside that
+   * document.
+   */
+  export interface TextDocumentPositionParams {
+    /**
+     * The text document.
+     */
+    textDocument: TextDocumentIdentifier
+    /**
+     * The position inside the text document.
+     */
+    position: Position
+  }
+
+  /**
+   * An event describing a change to a text document.
+   */
+  export interface TextDocumentContentChange {
+    /**
+     * The range of the document that changed.
+     */
+    range: Range
+    /**
+     * The new text for the provided range.
+     */
+    text: string
+  }
+
+  /**
+   * The workspace folder change event.
+   */
+  export interface WorkspaceFoldersChangeEvent {
+    /**
+     * The array of added workspace folders
+     */
+    added: WorkspaceFolder[]
+    /**
+     * The array of the removed workspace folders
+     */
+    removed: WorkspaceFolder[]
+  }
+
+  /**
+   * An event that is fired when a [document](#LinesTextDocument) will be saved.
+   *
+   * To make modifications to the document before it is being saved, call the
+   * [`waitUntil`](#TextDocumentWillSaveEvent.waitUntil)-function with a thenable
+   * that resolves to an array of [text edits](#TextEdit).
+   */
+  export interface TextDocumentWillSaveEvent {
+
+    /**
+     * The document that will be saved.
+     */
+    document: LinesTextDocument
+
+    /**
+     * The reason why save was triggered.
+     */
+    reason: 1 | 2 | 3
+  }
+
+  /**
+   * A document filter denotes a document by different properties like
+   * the [language](#LinesTextDocument.languageId), the [scheme](#Uri.scheme) of
+   * its resource, or a glob-pattern that is applied to the [path](#LinesTextDocument.fileName).
+   *
+   * Glob patterns can have the following syntax:
+   * - `*` to match one or more characters in a path segment
+   * - `?` to match on one character in a path segment
+   * - `**` to match any number of path segments, including none
+   * - `{}` to group conditions (e.g. `**​/*.{ts,js}` matches all TypeScript and JavaScript files)
+   * - `[]` to declare a range of characters to match in a path segment (e.g., `example.[0-9]` to match on `example.0`, `example.1`, …)
+   * - `[!...]` to negate a range of characters to match in a path segment (e.g., `example.[!0-9]` to match on `example.a`, `example.b`, but not `example.0`)
+   *
+   * @sample A language filter that applies to typescript files on disk: `{ language: 'typescript', scheme: 'file' }`
+   * @sample A language filter that applies to all package.json paths: `{ language: 'json', pattern: '**package.json' }`
+   */
+  export type DocumentFilter = {
+    /** A language id, like `typescript`. */
+    language: string
+    /** A Uri [scheme](#Uri.scheme), like `file` or `untitled`. */
+    scheme?: string
+    /** A glob pattern, like `*.{ts,js}`. */
+    pattern?: string
+  } | {
+    /** A language id, like `typescript`. */
+    language?: string
+    /** A Uri [scheme](#Uri.scheme), like `file` or `untitled`. */
+    scheme: string
+    /** A glob pattern, like `*.{ts,js}`. */
+    pattern?: string
+  } | {
+    /** A language id, like `typescript`. */
+    language?: string
+    /** A Uri [scheme](#Uri.scheme), like `file` or `untitled`. */
+    scheme?: string
+    /** A glob pattern, like `*.{ts,js}`. */
+    pattern: string
+  }
+
+  /**
+   * A document selector is the combination of one or many document filters.
+   *
+   * @sample `let sel:DocumentSelector = [{ language: 'typescript' }, { language: 'json', pattern: '**∕tsconfig.json' }]`;
+   */
+  export type DocumentSelector = (string | DocumentFilter)[]
+
+  /**
+   * How a signature help was triggered.
+   */
+  export namespace SignatureHelpTriggerKind {
+    /**
+    * Signature help was invoked manually by the user or by a command.
+    */
+    const Invoked: 1
+    /**
+    * Signature help was triggered by a trigger character.
+    */
+    const TriggerCharacter: 2
+    /**
+    * Signature help was triggered by the cursor moving or by the document content changing.
+    */
+    const ContentChange: 3
+  }
+
+  export type SignatureHelpTriggerKind = 1 | 2 | 3
+
+  /**
+   * Additional information about the context in which a signature help request was triggered.
+   *
+   * @since 3.15.0
+   */
+  export interface SignatureHelpContext {
+    /**
+     * Action that caused signature help to be triggered.
+     */
+    triggerKind: SignatureHelpTriggerKind
+    /**
+     * Character that caused signature help to be triggered.
+     *
+     * This is undefined when `triggerKind !== SignatureHelpTriggerKind.TriggerCharacter`
+     */
+    triggerCharacter?: string
+    /**
+     * `true` if signature help was already showing when it was triggered.
+     *
+     * Retriggers occur when the signature help is already active and can be caused by actions such as
+     * typing a trigger character, a cursor move, or document content changes.
+     */
+    isRetrigger: boolean
+    /**
+     * The currently active `SignatureHelp`.
+     *
+     * The `activeSignatureHelp` has its `SignatureHelp.activeSignature` field updated based on
+     * the user navigating through available signatures.
+     */
+    activeSignatureHelp?: SignatureHelp
+  }
+
+  /**
+   * How a completion was triggered
+   */
   export namespace CompletionTriggerKind {
     /**
      * Completion was triggered by typing an identifier (24x7 code
@@ -1107,462 +3217,7 @@ declare module 'coc.nvim' {
      */
     triggerCharacter?: string
 
-    option?: CompleteOption
-  }
-
-  /**
-   * Represents a reference to a command. Provides a title which
-   * will be used to represent a command in the UI and, optionally,
-   * an array of arguments which will be passed to the command handler
-   * function when invoked.
-   */
-  export interface Command {
-    /**
-     * Title of the command, like `save`.
-     */
-    title: string
-    /**
-     * The identifier of the actual command handler.
-     */
-    command: string
-    /**
-     * Arguments that the command handler should be
-     * invoked with.
-     */
-    arguments?: any[]
-  }
-
-  export interface TextDocumentEdit {
-    /**
-     * The text document to change.
-     */
-    textDocument: {
-      uri: string
-      version: number | null
-    }
-    /**
-     * The edits to be applied.
-     */
-    edits: TextEdit[]
-  }
-
-  /**
-   * A workspace edit represents changes to many resources managed in the workspace. The edit
-   * should either provide `changes` or `documentChanges`. If documentChanges are present
-   * they are preferred over `changes` if the client can handle versioned document edits.
-   */
-  export interface WorkspaceEdit {
-    /**
-     * Holds changes to existing resources.
-     */
-    changes?: {
-      [uri: string]: TextEdit[]
-    }
-    /**
-     * Depending on the client capability `workspace.workspaceEdit.resourceOperations` document changes
-     * are either an array of `TextDocumentEdit`s to express changes to n different text documents
-     * where each text document edit addresses a specific version of a text document. Or it can contain
-     * above `TextDocumentEdit`s mixed with create, rename and delete file / folder operations.
-     *
-     * Whether a client supports versioned document edits is expressed via
-     * `workspace.workspaceEdit.documentChanges` client capability.
-     *
-     * If a client neither supports `documentChanges` nor `workspace.workspaceEdit.resourceOperations` then
-     * only plain `TextEdit`s using the `changes` property are supported.
-     */
-    documentChanges?: (TextDocumentEdit | CreateFile | RenameFile | DeleteFile)[]
-  }
-
-  interface ResourceOperation {
-    kind: string
-  }
-
-  /**
-   * Delete file options
-   */
-  export interface DeleteFileOptions {
-    /**
-     * Delete the content recursively if a folder is denoted.
-     */
-    recursive?: boolean
-    /**
-     * Ignore the operation if the file doesn't exist.
-     */
-    ignoreIfNotExists?: boolean
-  }
-  /**
-   * Delete file operation
-   */
-  export interface DeleteFile extends ResourceOperation {
-    /**
-     * A delete
-     */
-    kind: 'delete'
-    /**
-     * The file to delete.
-     */
-    uri: string
-    /**
-     * Delete options.
-     */
-    options?: DeleteFileOptions
-  }
-
-  /**
-   * Options to create a file.
-   */
-  export interface CreateFileOptions {
-    /**
-     * Overwrite existing file. Overwrite wins over `ignoreIfExists`
-     */
-    overwrite?: boolean
-    /**
-     * Ignore if exists.
-     */
-    ignoreIfExists?: boolean
-  }
-  /**
-   * Create file operation.
-   */
-  export interface CreateFile extends ResourceOperation {
-    /**
-     * A create
-     */
-    kind: 'create'
-    /**
-     * The resource to create.
-     */
-    uri: string
-    /**
-     * Additional options
-     */
-    options?: CreateFileOptions
-  }
-
-  /**
-   * Rename file options
-   */
-  export interface RenameFileOptions {
-    /**
-     * Overwrite target if existing. Overwrite wins over `ignoreIfExists`
-     */
-    overwrite?: boolean
-    /**
-     * Ignores if target exists.
-     */
-    ignoreIfExists?: boolean
-  }
-  /**
-   * Rename file operation
-   */
-  export interface RenameFile extends ResourceOperation {
-    /**
-     * A rename
-     */
-    kind: 'rename'
-    /**
-     * The old (existing) location.
-     */
-    oldUri: string
-    /**
-     * The new location.
-     */
-    newUri: string
-    /**
-     * Rename options.
-     */
-    options?: RenameFileOptions
-  }
-  /**
-   * Represents a related message and source code location for a diagnostic. This should be
-   * used to point to code locations that cause or related to a diagnostics, e.g when duplicating
-   * a symbol in a scope.
-   */
-  export interface DiagnosticRelatedInformation {
-    /**
-     * The location of this related diagnostic information.
-     */
-    location: Location
-    /**
-     * The message of this related diagnostic information.
-     */
-    message: string
-  }
-
-  /**
-   * The diagnostic's severity.
-   */
-  export namespace DiagnosticSeverity {
-    /**
-     * Reports an error.
-     */
-    const Error: 1
-    /**
-     * Reports a warning.
-     */
-    const Warning: 2
-    /**
-     * Reports an information.
-     */
-    const Information: 3
-    /**
-     * Reports a hint.
-     */
-    const Hint: 4
-  }
-
-  export type DiagnosticSeverity = 1 | 2 | 3 | 4
-
-  /**
-   * The diagnostic tags.
-   *
-   * @since 3.15.0
-   */
-  export namespace DiagnosticTag {
-    /**
-     * Unused or unnecessary code.
-     *
-     * Clients are allowed to render diagnostics with this tag faded out instead of having
-     * an error squiggle.
-     */
-    const Unnecessary: 1
-    /**
-     * Deprecated or obsolete code.
-     *
-     * Clients are allowed to rendered diagnostics with this tag strike through.
-     */
-    const Deprecated: 2
-  }
-
-  export type DiagnosticTag = 1 | 2
-
-  /**
-   * Represents a diagnostic, such as a compiler error or warning. Diagnostic objects
-   * are only valid in the scope of a resource.
-   */
-  export interface Diagnostic {
-    /**
-     * The range at which the message applies
-     */
-    range: Range
-    /**
-     * The diagnostic's severity. Can be omitted. If omitted it is up to the
-     * client to interpret diagnostics as error, warning, info or hint.
-     */
-    severity?: DiagnosticSeverity
-    /**
-     * The diagnostic's code, which usually appear in the user interface.
-     */
-    code?: number | string
-    /**
-     * A human-readable string describing the source of this
-     * diagnostic, e.g. 'typescript' or 'super lint'. It usually
-     * appears in the user interface.
-     */
-    source?: string
-    /**
-     * The diagnostic's message. It usually appears in the user interface
-     */
-    message: string
-    /**
-     * Additional metadata about the diagnostic.
-     */
-    tags?: DiagnosticTag[]
-    /**
-     * An array of related diagnostic information, e.g. when symbol-names within
-     * a scope collide all definitions can be marked via this property.
-     */
-    relatedInformation?: DiagnosticRelatedInformation[]
-  }
-
-  /**
-   * The Diagnostic namespace provides helper functions to work with
-   * [Diagnostic](#Diagnostic) literals.
-   */
-  export namespace Diagnostic {
-    /**
-     * Creates a new Diagnostic literal.
-     */
-    function create(range: Range, message: string, severity?: DiagnosticSeverity, code?: number | string, source?: string, relatedInformation?: DiagnosticRelatedInformation[]): Diagnostic
-    /**
-     * Checks whether the given literal conforms to the [Diagnostic](#Diagnostic) interface.
-     */
-    function is(value: any): value is Diagnostic
-  }
-
-  /**
-   * A code action represents a change that can be performed in code, e.g. to fix a problem or
-   * to refactor code.
-   *
-   * A CodeAction must set either `edit` and/or a `command`. If both are supplied, the `edit` is applied first, then the `command` is executed.
-   */
-  export interface CodeAction {
-    /**
-     * A short, human-readable, title for this code action.
-     */
-    title: string
-    /**
-     * The kind of the code action.
-     *
-     * Used to filter code actions.
-     */
-    kind?: CodeActionKind
-    /**
-     * The diagnostics that this code action resolves.
-     */
-    diagnostics?: Diagnostic[]
-    /**
-     * Marks this as a preferred action. Preferred actions are used by the `auto fix` command and can be targeted
-     * by keybindings.
-     *
-     * A quick fix should be marked preferred if it properly addresses the underlying error.
-     * A refactoring should be marked preferred if it is the most reasonable choice of actions to take.
-     *
-     * @since 3.15.0
-     */
-    isPreferred?: boolean
-    /**
-     * The workspace edit this code action performs.
-     */
-    edit?: WorkspaceEdit
-    /**
-     * A command this code action executes. If a code action
-     * provides a edit and a command, first the edit is
-     * executed and then the command.
-     */
-    command?: Command
-    /**
-     * Id of client that provide codeAction.
-     */
-    clientId?: string
-  }
-
-  /**
-   * The kind of a code action.
-   *
-   * Kinds are a hierarchical list of identifiers separated by `.`, e.g. `"refactor.extract.function"`.
-   *
-   * The set of kinds is open and client needs to announce the kinds it supports to the server during
-   * initialization.
-   */
-  export type CodeActionKind = string
-  /**
-   * A set of predefined code action kinds
-   */
-  export namespace CodeActionKind {
-    /**
-     * Empty kind.
-     */
-    const Empty: CodeActionKind
-    /**
-     * Base kind for quickfix actions: 'quickfix'
-     */
-    const QuickFix: CodeActionKind
-    /**
-     * Base kind for refactoring actions: 'refactor'
-     */
-    const Refactor: CodeActionKind
-    /**
-     * Base kind for refactoring extraction actions: 'refactor.extract'
-     *
-     * Example extract actions:
-     *
-     * - Extract method
-     * - Extract function
-     * - Extract variable
-     * - Extract interface from class
-     * - ...
-     */
-    const RefactorExtract: CodeActionKind
-    /**
-     * Base kind for refactoring inline actions: 'refactor.inline'
-     *
-     * Example inline actions:
-     *
-     * - Inline function
-     * - Inline variable
-     * - Inline constant
-     * - ...
-     */
-    const RefactorInline: CodeActionKind
-    /**
-     * Base kind for refactoring rewrite actions: 'refactor.rewrite'
-     *
-     * Example rewrite actions:
-     *
-     * - Convert JavaScript function to class
-     * - Add or remove parameter
-     * - Encapsulate field
-     * - Make method static
-     * - Move method to base class
-     * - ...
-     */
-    const RefactorRewrite: CodeActionKind
-    /**
-     * Base kind for source actions: `source`
-     *
-     * Source code actions apply to the entire file.
-     */
-    const Source: CodeActionKind
-    /**
-     * Base kind for an organize imports source action: `source.organizeImports`
-     */
-    const SourceOrganizeImports: CodeActionKind
-    /**
-     * Base kind for auto-fix source actions: `source.fixAll`.
-     *
-     * Fix all actions automatically fix errors that have a clear fix that do not require user input.
-     * They should not suppress errors or perform unsafe fixes such as generating new types or classes.
-     *
-     * @since 3.15.0
-     */
-    const SourceFixAll: CodeActionKind
-  }
-
-  /**
-   * Position in a text document expressed as zero-based line and character offset.
-   * The offsets are based on a UTF-16 string representation. So a string of the form
-   * `a𐐀b` the character offset of the character `a` is 0, the character offset of `𐐀`
-   * is 1 and the character offset of b is 3 since `𐐀` is represented using two code
-   * units in UTF-16.
-   *
-   * Positions are line end character agnostic. So you can not specify a position that
-   * denotes `\r|\n` or `\n|` where `|` represents the character offset.
-   */
-  export interface Position {
-    /**
-     * Line position in a document (zero-based).
-     * If a line number is greater than the number of lines in a document, it defaults back to the number of lines in the document.
-     * If a line number is negative, it defaults to 0.
-     */
-    line: number
-    /**
-     * Character offset on a line in a document (zero-based). Assuming that the line is
-     * represented as a string, the `character` value represents the gap between the
-     * `character` and `character + 1`.
-     *
-     * If the character value is greater than the line length it defaults back to the
-     * line length.
-     * If a line number is negative, it defaults to 0.
-     */
-    character: number
-  }
-
-  /**
- * The Position namespace provides helper functions to work with
- * [Position](#Position) literals.
- */
-  export namespace Position {
-    /**
-     * Creates a new Position literal from the given line and character.
-     * @param line The position's line.
-     * @param character The position's character.
-     */
-    function create(line: number, character: number): Position
-    /**
-     * Checks whether the given liternal conforms to the [Position](#Position) interface.
-     */
-    function is(value: any): value is Position
+    option: CompleteOption
   }
 
   /**
@@ -1613,122 +3268,6 @@ declare module 'coc.nvim' {
   }
 
   /**
-   * Represents a location inside a resource, such as a line
-   * inside a text file.
-   */
-  export interface Location {
-    uri: string
-    range: Range
-  }
-
-  /**
-   * The Location namespace provides helper functions to work with
-   * [Location](#Location) literals.
-   */
-  export namespace Location {
-    /**
-     * Creates a Location literal.
-     * @param uri The location's uri.
-     * @param range The location's range.
-     */
-    function create(uri: string, range: Range): Location
-    /**
-     * Checks whether the given literal conforms to the [Location](#Location) interface.
-     */
-    function is(value: any): value is Location
-  }
-
-  /**
-   * A range in a text document expressed as (zero-based) start and end positions.
-   *
-   * If you want to specify a range that contains a line including the line ending
-   * character(s) then use an end position denoting the start of the next line.
-   * For example:
-   * ```ts
-   * {
-   *     start: { line: 5, character: 23 }
-   *     end : { line 6, character : 0 }
-   * }
-   * ```
-   */
-  export interface Range {
-    /**
-     * The range's start position
-     */
-    start: Position
-    /**
-     * The range's end position.
-     */
-    end: Position
-  }
-
-  /**
-   * The Range namespace provides helper functions to work with
-   * [Range](#Range) literals.
-   */
-  export namespace Range {
-    /**
-     * Create a new Range liternal.
-     * @param start The range's start position.
-     * @param end The range's end position.
-     */
-    function create(start: Position, end: Position): Range
-    /**
-     * Create a new Range liternal.
-     * @param startLine The start line number.
-     * @param startCharacter The start character.
-     * @param endLine The end line number.
-     * @param endCharacter The end character.
-     */
-    function create(startLine: number, startCharacter: number, endLine: number, endCharacter: number): Range
-    /**
-     * Checks whether the given literal conforms to the [Range](#Range) interface.
-     */
-    function is(value: any): value is Range
-  }
-
-  /**
-   * A text edit applicable to a text document.
-   */
-  export interface TextEdit {
-    /**
-     * The range of the text document to be manipulated. To insert
-     * text into a document create a range where start === end.
-     */
-    range: Range
-    /**
-     * The string to be inserted. For delete operations use an
-     * empty string.
-     */
-    newText: string
-  }
-
-  /**
-   * The TextEdit namespace provides helper function to create replace,
-   * insert and delete edits more easily.
-   */
-  export namespace TextEdit {
-    /**
-     * Creates a replace text edit.
-     * @param range The range of text to be replaced.
-     * @param newText The new text.
-     */
-    function replace(range: Range, newText: string): TextEdit
-    /**
-     * Creates a insert text edit.
-     * @param position The position to insert the text at.
-     * @param newText The text to be inserted.
-     */
-    function insert(position: Position, newText: string): TextEdit
-    /**
-     * Creates a delete text edit.
-     * @param range The range of text to be deleted.
-     */
-    function del(range: Range): TextEdit
-    function is(value: any): value is TextEdit
-  }
-
-  /**
    * Defines a CancellationToken. This interface is not
    * intended to be implemented. A CancellationToken must
    * be created via a CancellationTokenSource.
@@ -1757,164 +3296,72 @@ declare module 'coc.nvim' {
   }
 
   /**
-   * A simple text document. Not to be implemented. The document keeps the content
-   * as string.
+   * Represents a line of text, such as a line of source code.
+   *
+   * TextLine objects are __immutable__. When a {@link LinesTextDocument document} changes,
+   * previously retrieved lines will not represent the latest state.
    */
-  export interface TextDocument {
+  export interface TextLine {
     /**
-     * The associated URI for this document. Most documents have the __file__-scheme, indicating that they
-     * represent files on disk. However, some documents may have other schemes indicating that they are not
-     * available on disk.
-     *
-     * @readonly
+     * The zero-based line number.
      */
-    readonly uri: string
-    /**
-     * The identifier of the language associated with this document.
-     *
-     * @readonly
-     */
-    readonly languageId: string
-    /**
-     * The version number of this document (it will increase after each
-     * change, including undo/redo).
-     *
-     * @readonly
-     */
-    readonly version: number
-    /**
-     * Get the text of this document. A substring can be retrieved by
-     * providing a range.
-     *
-     * @param range (optional) An range within the document to return.
-     * If no range is passed, the full content is returned.
-     * Invalid range positions are adjusted as described in [Position.line](#Position.line)
-     * and [Position.character](#Position.character).
-     * If the start range position is greater than the end range position,
-     * then the effect of getText is as if the two positions were swapped.
+    readonly lineNumber: number
 
-     * @return The text of this document or a substring of the text if a
-     *         range is provided.
-     */
-    getText(range?: Range): string
     /**
-     * Converts a zero-based offset to a position.
-     *
-     * @param offset A zero-based offset.
-     * @return A valid [position](#Position).
+     * The text of this line without the line separator characters.
      */
-    positionAt(offset: number): Position
+    readonly text: string
+
     /**
-     * Converts the position to a zero-based offset.
-     * Invalid positions are adjusted as described in [Position.line](#Position.line)
-     * and [Position.character](#Position.character).
-     *
-     * @param position A position.
-     * @return A valid zero-based offset.
+     * The range this line covers without the line separator characters.
      */
-    offsetAt(position: Position): number
+    readonly range: Range
+
     /**
-     * The number of lines in this document.
-     *
-     * @readonly
+     * The range this line covers with the line separator characters.
      */
-    readonly lineCount: number
+    readonly rangeIncludingLineBreak: Range
+
+    /**
+     * The offset of the first character which is not a whitespace character as defined
+     * by `/\s/`. **Note** that if a line is all whitespace the length of the line is returned.
+     */
+    readonly firstNonWhitespaceCharacterIndex: number
+
+    /**
+     * Whether this line is whitespace only, shorthand
+     * for {@link TextLine.firstNonWhitespaceCharacterIndex} === {@link TextLine.text TextLine.text.length}.
+     */
+    readonly isEmptyOrWhitespace: boolean
   }
 
-  /**
-   * @since 3.16.0
-   */
-  export interface SemanticTokensLegend {
+  export interface LinesTextDocument extends TextDocument {
     /**
-     * The token types a server uses.
+     * Total length of TextDocument.
      */
-    tokenTypes: string[]
+    readonly length: number
     /**
-     * The token modifiers a server uses.
+     * End position of TextDocument.
      */
-    tokenModifiers: string[]
-  }
-
-  /**
-  * @since 3.16.0
-  */
-  export interface SemanticTokens {
+    readonly end: Position
     /**
-    * An optional result id. If provided and clients support delta updating
-    * the client will include the result id in the next semantic token request.
-    * A server can then instead of computing all semantic tokens again simply
-    * send a delta.
-    */
-    resultId?: string
-    /**
-    * The actual tokens.
-    */
-    data: number[]
-  }
-
-  /**
-   * @since 3.16.0
-   */
-  export interface SemanticTokensEdit {
-    /**
-     * The start offset of the edit.
+     * 'eol' option of related buffer. When enabled additional `\n` will be
+     * added to the end of document content
      */
-    start: number
+    readonly eol: boolean
     /**
-     * The count of elements to remove.
+     * Lines of TextDocument.
      */
-    deleteCount: number
+    readonly lines: ReadonlyArray<string>
     /**
-     * The elements to insert.
-     */
-    data?: number[]
-  }
-
-  /**
-   * @since 3.16.0
-   */
-  export interface SemanticTokensDelta {
-    readonly resultId?: string
-    /**
-     * The semantic token edits to transform a previous result into a new result.
-     */
-    edits: SemanticTokensEdit[]
-  }
-
-  /**
-   * A semantic tokens builder can help with creating a `SemanticTokens` instance
-   * which contains delta encoded semantic tokens.
-   */
-  export class SemanticTokensBuilder {
-    constructor(legend?: SemanticTokensLegend)
-
-    /**
-     * Add another token.
+     * Returns a text line denoted by the line number. Note
+     * that the returned object is *not* live and changes to the
+     * document are not reflected.
      *
-     * @public
-     * @param line The token start line number (absolute value).
-     * @param char The token start character (absolute value).
-     * @param length The token length in characters.
-     * @param tokenType The encoded token type.
-     * @param tokenModifiers The encoded token modifiers.
+     * @param line or position
+     * @return A {@link TextLine line}.
      */
-    push(line: number, char: number, length: number, tokenType: number, tokenModifiers?: number): void
-    /**
-     * Add another token. Use only when providing a legend.
-     *
-     * @public
-     * @param range The range of the token. Must be single-line.
-     * @param tokenType The token type.
-     * @param tokenModifiers The token modifiers.
-     */
-    push(range: Range, tokenType: string, tokenModifiers?: string[]): void
-
-    /**
-     * Finish and create a `SemanticTokens` instance.
-     *
-     * @public
-     */
-    build(resultId?: string): SemanticTokens
+    lineAt(lineOrPos: number | Position): TextLine
   }
 
   /**
@@ -1937,80 +3384,365 @@ declare module 'coc.nvim' {
   }
 
   /**
-   * Represents programming constructs like functions or constructors in the context
-   * of call hierarchy.
+   * Moniker uniqueness level to define scope of the moniker.
    *
    * @since 3.16.0
    */
-  export interface CallHierarchyItem {
+  export namespace UniquenessLevel {
     /**
-     * The name of this item.
+     * The moniker is only unique inside a document
      */
-    name: string
+    export const document = 'document'
+
     /**
-     * The kind of this item.
+     * The moniker is unique inside a project for which a dump got created
      */
-    kind: SymbolKind
+    export const project = 'project'
+
     /**
-     * Tags for this item.
+     * The moniker is unique inside the group to which a project belongs
      */
-    tags?: number[]
+    export const group = 'group'
+
     /**
-     * More detail for this item, e.g. the signature of a function.
+     * The moniker is unique inside the moniker scheme.
      */
-    detail?: string
+    export const scheme = 'scheme'
+
     /**
-     * The resource identifier of this item.
+     * The moniker is globally unique
      */
-    uri: string
+    export const global = 'global'
+  }
+
+  export type UniquenessLevel = 'document' | 'project' | 'group' | 'scheme' | 'global'
+
+  /**
+   * The moniker kind.
+   *
+   * @since 3.16.0
+   */
+  export enum MonikerKind {
     /**
-     * The range enclosing this symbol not including leading/trailing whitespace but everything else, e.g. comments and code.
+     * The moniker represent a symbol that is imported into a project
      */
-    range: Range
+    import = 'import',
+
     /**
-     * The range that should be selected and revealed when this symbol is being picked, e.g. the name of a function.
-     * Must be contained by the [`range`](#CallHierarchyItem.range).
+     * The moniker represents a symbol that is exported from a project
      */
-    selectionRange: Range
+    export = 'export',
+
     /**
-     * A data entry field that is preserved between a call hierarchy prepare and
-     * incoming calls or outgoing calls requests.
+     * The moniker represents a symbol that is local to a project (e.g. a local
+     * variable of a function, a class not visible outside the project, ...)
      */
-    data?: unknown
+    local = 'local'
   }
 
   /**
-  * Represents an incoming call, e.g. a caller of a method or constructor.
-  *
-  * @since 3.16.0
-  */
-  export interface CallHierarchyIncomingCall {
+   * Moniker definition to match LSIF 0.5 moniker definition.
+   *
+   * @since 3.16.0
+   */
+  export interface Moniker {
     /**
-    * The item that makes the call.
-    */
-    from: CallHierarchyItem
+     * The scheme of the moniker. For example tsc or .Net
+     */
+    scheme: string
+
     /**
-    * The ranges at which the calls appear. This is relative to the caller
-    * denoted by [`this.from`](#CallHierarchyIncomingCall.from).
-    */
-    fromRanges: Range[]
+     * The identifier of the moniker. The value is opaque in LSIF however
+     * schema owners are allowed to define the structure if they want.
+     */
+    identifier: string
+
+    /**
+     * The scope in which the moniker is unique
+     */
+    unique: UniquenessLevel
+
+    /**
+     * The moniker kind if known.
+     */
+    kind?: MonikerKind
+  }
+
+  /**
+   * A previous result id in a workspace pull request.
+   *
+   * @since 3.17.0
+   */
+  export type PreviousResultId = {
+    /**
+     * The URI for which the client knowns a
+     * result id.
+     */
+    uri: string
+    /**
+     * The value of the previous result id.
+     */
+    value: string
+  }
+
+  export type DocumentDiagnosticReportKind = 'full' | 'unchanged'
+
+  /**
+   * The document diagnostic report kinds.
+   *
+   * @since 3.17.0
+   */
+  export namespace DocumentDiagnosticReportKind {
+    /**
+     * A diagnostic report with a full
+     * set of problems.
+     */
+    const Full = "full"
+    /**
+     * A report indicating that the last
+     * returned report is still accurate.
+     */
+    const Unchanged = "unchanged"
   }
   /**
-  * Represents an outgoing call, e.g. calling a getter from a method or a method from a constructor etc.
-  *
-  * @since 3.16.0
-  */
-  export interface CallHierarchyOutgoingCall {
+   * A diagnostic report with a full set of problems.
+   *
+   * @since 3.17.0
+   */
+  export type FullDocumentDiagnosticReport = {
     /**
-    * The item that is called.
-    */
-    to: CallHierarchyItem
+     * A full document diagnostic report.
+     */
+    kind: typeof DocumentDiagnosticReportKind.Full
     /**
-    * The range at which this item is called. This is the range relative to the caller, e.g the item
-    * passed to [`provideCallHierarchyOutgoingCalls`](#CallHierarchyItemProvider.provideCallHierarchyOutgoingCalls)
-    * and not [`this.to`](#CallHierarchyOutgoingCall.to).
+     * An optional result id. If provided it will
+     * be sent on the next diagnostic request for the
+     * same document.
+     */
+    resultId?: string
+    /**
+     * The actual items.
+     */
+    items: Diagnostic[]
+  }
+
+  /**
+   * A diagnostic report indicating that the last returned
+   * report is still accurate.
+   *
+   * @since 3.17.0
+   */
+  export type UnchangedDocumentDiagnosticReport = {
+    /**
+     * A document diagnostic report indicating
+     * no changes to the last result. A server can
+     * only return `unchanged` if result ids are
+     * provided.
+     */
+    kind: typeof DocumentDiagnosticReportKind.Unchanged
+    /**
+     * A result id which will be sent on the next
+     * diagnostic request for the same document.
+     */
+    resultId: string
+  }
+
+  /**
+   * An unchanged diagnostic report with a set of related documents.
+   *
+   * @since 3.17.0
+   */
+  export type RelatedUnchangedDocumentDiagnosticReport = UnchangedDocumentDiagnosticReport & {
+    /**
+     * Diagnostics of related documents. This information is useful
+     * in programming languages where code in a file A can generate
+     * diagnostics in a file B which A depends on. An example of
+     * such a language is C/C++ where marco definitions in a file
+     * a.cpp and result in errors in a header file b.hpp.
+     *
+     * @since 3.17.0
+     */
+    relatedDocuments?: {
+      [uri: string]: FullDocumentDiagnosticReport | UnchangedDocumentDiagnosticReport
+    }
+  }
+
+  export type RelatedFullDocumentDiagnosticReport = FullDocumentDiagnosticReport & {
+    /**
+     * Diagnostics of related documents. This information is useful
+     * in programming languages where code in a file A can generate
+     * diagnostics in a file B which A depends on. An example of
+     * such a language is C/C++ where marco definitions in a file
+     * a.cpp and result in errors in a header file b.hpp.
+     *
+     * @since 3.17.0
+     */
+    relatedDocuments?: {
+      [uri: string]: FullDocumentDiagnosticReport | UnchangedDocumentDiagnosticReport
+    }
+  }
+  export type DocumentDiagnosticReport = RelatedFullDocumentDiagnosticReport | RelatedUnchangedDocumentDiagnosticReport
+
+  /*
+   * A workspace diagnostic report.
+   *
+   * @since 3.17.0
+   */
+  export type WorkspaceDiagnosticReport = {
+    items: WorkspaceDocumentDiagnosticReport[]
+  }
+  /**
+   * A partial result for a workspace diagnostic report.
+   *
+   * @since 3.17.0
+   */
+  export type WorkspaceDiagnosticReportPartialResult = {
+    items: WorkspaceDocumentDiagnosticReport[]
+  }
+
+  export type WorkspaceFullDocumentDiagnosticReport = FullDocumentDiagnosticReport & {
+    /**
+    * The URI for which diagnostic information is reported.
     */
-    fromRanges: Range[]
+    uri: string
+    /**
+    * The version number for which the diagnostics are reported.
+    * If the document is not marked as open `null` can be provided.
+    */
+    version: number | null
+  }
+
+  export type WorkspaceUnchangedDocumentDiagnosticReport = UnchangedDocumentDiagnosticReport & {
+    /**
+     * The URI for which diagnostic information is reported.
+     */
+    uri: string
+    /**
+     * The version number for which the diagnostics are reported.
+     * If the document is not marked as open `null` can be provided.
+     */
+    version: number | null
+  }
+
+  export type WorkspaceDocumentDiagnosticReport = WorkspaceFullDocumentDiagnosticReport | WorkspaceUnchangedDocumentDiagnosticReport
+
+  export interface ResultReporter {
+    (chunk: WorkspaceDiagnosticReportPartialResult | null): void
+  }
+
+  export type ErrorCodes = number
+
+  /**
+   * Predefined error codes.
+   */
+  export namespace ErrorCodes {
+    const ParseError: -32700
+    const InvalidRequest: -32600
+    const MethodNotFound: -32601
+    const InvalidParams: -32602
+    const InternalError: -32603
+    /**
+     * This is the start range of JSON RPC reserved error codes.
+     * It doesn't denote a real error code. No application error codes should
+     * be defined between the start and end range. For backwards
+     * compatibility the `ServerNotInitialized` and the `UnknownErrorCode`
+     * are left in the range.
+     *
+     * @since 3.16.0
+    */
+    const jsonrpcReservedErrorRangeStart: -32099
+    /** @deprecated use  jsonrpcReservedErrorRangeStart */
+    const serverErrorStart: -32099
+    /**
+     * An error occurred when write a message to the transport layer.
+     */
+    const MessageWriteError: -32099
+    /**
+     * An error occurred when reading a message from the transport layer.
+     */
+    const MessageReadError: -32098
+    /**
+     * The connection got disposed or lost and all pending responses got
+     * rejected.
+     */
+    const PendingResponseRejected: -32097
+    /**
+     * The connection is inactive and a use of it failed.
+     */
+    const ConnectionInactive: -32096
+    /**
+     * Error code indicating that a server received a notification or
+     * request before the server has received the `initialize` request.
+     */
+    const ServerNotInitialized: -32002
+    const UnknownErrorCode: -32001
+    /**
+     * This is the end range of JSON RPC reserved error codes.
+     * It doesn't denote a real error code.
+     *
+     * @since 3.16.0
+    */
+    const jsonrpcReservedErrorRangeEnd: -32000
+    /** @deprecated use  jsonrpcReservedErrorRangeEnd */
+    const serverErrorEnd: -32000
+  }
+
+  export interface ResponseErrorLiteral<D = void> {
+    /**
+     * A number indicating the error type that occurred.
+     */
+    code: number
+    /**
+     * A string providing a short description of the error.
+     */
+    message: string
+    /**
+     * A Primitive or Structured value that contains additional
+     * information about the error. Can be omitted.
+     */
+    data?: D
+  }
+
+  /**
+   * An error object return in a response in case a request
+   * has failed.
+   */
+  export class ResponseError<D = void> extends Error {
+    readonly code: number
+    readonly data: D | undefined
+    constructor(code: number, message: string, data?: D)
+    toJson(): ResponseErrorLiteral<D>
+  }
+
+  /**
+   * A language server message
+   */
+  export interface Message {
+    jsonrpc: string
+  }
+
+  export interface AbstractCancellationTokenSource extends Disposable {
+    token: CancellationToken
+    cancel(): void
+  }
+
+  /**
+   * A response message.
+   */
+  export interface ResponseMessage extends Message {
+    /**
+     * The request id.
+     */
+    id: number | string | null
+    /**
+     * The result of a request. This member is REQUIRED on success.
+     * This member MUST NOT exist if there was an error invoking the method.
+     */
+    result?: string | number | boolean | object | any[] | null
+    /**
+     * The error object in case a request fails.
+     */
+    error?: ResponseErrorLiteral<any>
   }
   // }}
 
@@ -2080,8 +3812,17 @@ declare module 'coc.nvim' {
   export interface NvimFloatOptions {
     standalone?: boolean
     focusable?: boolean
-    relative?: 'editor' | 'cursor' | 'win'
+    relative?: 'editor' | 'cursor' | 'win' | 'mouse'
     anchor?: 'NW' | 'NE' | 'SW' | 'SE'
+    border?: 'none' | 'single' | 'double' | 'rounded' | 'solid' | 'shadow' | string[]
+    style?: 'minimal'
+    title?: string
+    title_pos?: 'left' | 'center' | 'right'
+    footer?: string | [string, string][]
+    footer_pos?: 'left' | 'center' | 'right'
+    noautocmd?: boolean
+    fixed?: boolean
+    hide?: boolean
     height: number
     width: number
     row: number
@@ -2100,7 +3841,7 @@ declare module 'coc.nvim' {
     hl_eol?: boolean
     // A list of [text, highlight] tuples
     virt_text?: [string, string | string[]][]
-    virt_text_pos?: 'eol' | 'overlay' | 'right_align'
+    virt_text_pos?: 'eol' | 'overlay' | 'right_align' | 'inline'
     virt_text_win_col?: number
     virt_text_hide?: boolean
     virt_lines?: [string, string | string[]][][]
@@ -2172,7 +3913,37 @@ declare module 'coc.nvim' {
     colEnd: number
   }
 
+  export interface ExtendedHighlightItem extends HighlightItem {
+    combine?: boolean
+    start_incl?: boolean
+    end_incl?: boolean
+  }
+
+  export interface HighlightOption {
+    /**
+     * 0 based start line, default to 0.
+     */
+    start?: number
+    /**
+     * 0 based end line, default to 0.
+     */
+    end?: number
+    /**
+     * Default to 0 on vim8, 4096 on neovim
+     */
+    priority?: number
+    /**
+     * Buffer changedtick to match.
+     */
+    changedtick?: number
+  }
+
+  /**
+   * All values default to `false`, see `:h :map-arguments`
+   */
   export interface BufferKeymapOption {
+    desc?: string
+    noremap?: boolean
     nowait?: boolean
     silent?: boolean
     script?: boolean
@@ -2209,6 +3980,29 @@ declare module 'coc.nvim' {
     lineEnd?: number
   }
 
+  export interface VirtualTextOption {
+    /**
+     * Only works on vim9 yet.
+     */
+    col?: number
+    /**
+     * highlight mode
+     */
+    hl_mode?: 'combine' | 'replace' | 'blend'
+    /**
+     * neovim only
+     */
+    virt_text_win_col?: number
+    /**
+     * vim9 only
+     */
+    text_align?: 'after' | 'right' | 'below'
+    /**
+     * vim9 only
+     */
+    text_wrap?: 'wrap' | 'truncate'
+  }
+
   interface BaseApi<T> {
     /**
      * unique identify number
@@ -2236,7 +4030,7 @@ declare module 'coc.nvim' {
     notify(name: string, args?: VimValue[]): void
 
     /**
-     * Retrieves scoped variable, returns null when value not exists.
+     * Retrieves scoped variable, returns null when value doesn't exist.
      */
     getVar(name: string): Promise<VimValue | null>
 
@@ -2260,30 +4054,37 @@ declare module 'coc.nvim' {
     deleteVar(name: string): void
 
     /**
-     * Retrieves a scoped option, not exists for tabpage.
+     * Retrieves a scoped option, doesn't exist for tabpage.
+     *
+     * Note: neovim returns true/false for boolean option, but it would be 0/1
+     * on vim.
      */
     getOption(name: string): Promise<VimValue>
 
     /**
-     * Set scoped option by request, not exists for tabpage.
+     * Set scoped option by request, doesn't exist for tabpage.
      */
     setOption(name: string, value: VimValue): Promise<void>
 
     /**
-     * Set scoped  variable by notification, not exists for tabpage.
+     * Set scoped  variable by notification, doesn't exist for tabpage.
      */
     setOption(name: string, value: VimValue, isNotify: true): void
   }
+
+  export const nvim: Neovim
 
   export interface Neovim extends BaseApi<Neovim> {
 
     /**
      * Echo error message to vim and log error stack.
      */
-    echoError(msg: string | Error): void
+    echoError(msg: unknown): void
 
     /**
      * Check if `nvim_` function exists.
+     *
+     * @deprecated use `workspace.has` to check vim version instead.
      */
     hasFunction(name: string): boolean
 
@@ -2309,21 +4110,33 @@ declare module 'coc.nvim' {
 
     /**
      * Stop send subsequent notifications.
+     * This method **must** be paired with `nvim.resumeNotification` in a sync manner.
      */
     pauseNotification(): void
 
     /**
      * Send paused notifications by nvim_call_atomic request
      *
+     * @param {boolean} redrawVim Redraw vim on vim8 to update the screen
+     *
      * **Note**: avoid call async function between pauseNotification and
      * resumeNotification.
      */
-    resumeNotification(): Promise<[any[], [string, number, string] | null]>
+    resumeNotification(redrawVim?: boolean): Promise<[VimValue[], [string, number, string] | null]>
 
     /**
      * Send paused notifications by nvim_call_atomic notification
+     *
+     * @param {boolean} redrawVim Redraw vim to update the screen
+     * @param {true} notify
+     * @returns {void}
      */
-    resumeNotification(cancel: boolean, notify: true): void
+    resumeNotification(redrawVim: boolean, notify: true): void
+
+    /**
+     * Send redraw command to vim, does nothing on neovim since it's not necessary on most cases.
+     */
+    redrawVim(): void
 
     /**
      * Get list of current buffers.
@@ -2390,6 +4203,7 @@ declare module 'coc.nvim' {
 
     /**
      * Gets existing, non-anonymous namespaces.
+     * **Note:** works on neovim only.
      *
      * @return dict that maps from names to namespace ids.
      */
@@ -2420,8 +4234,6 @@ declare module 'coc.nvim' {
 
     /**
      * Creates a new, empty, unnamed buffer.
-     *
-     * **Note:** works on neovim only.
      */
     createNewBuffer(listed?: boolean, scratch?: boolean): Promise<Buffer>
 
@@ -2507,7 +4319,7 @@ declare module 'coc.nvim' {
      *
      * **Note:** works on neovim only.
      */
-    executeLua(code: string, args?: VimValue[]): Promise<object>
+    lua(code: string, args?: VimValue[]): Promise<object>
 
     /**
      * Calls a VimL |Dictionary-function| with the given arguments.
@@ -2566,9 +4378,14 @@ declare module 'coc.nvim' {
     /**
      * Runs a command and returns output.
      *
-     * **Note:** works on neovim only.
+     * @deprecated Use exec() instead.
      */
     commandOutput(arg: string): Promise<string>
+
+    /**
+     * Executes Vimscript (multiline block of Ex-commands), like anonymous |:source|
+     */
+    exec(src: string, output?: boolean): Promise<string>
 
     /**
      * Gets a v: variable.
@@ -2579,6 +4396,16 @@ declare module 'coc.nvim' {
      * `:h nvim_feedkeys`
      */
     feedKeys(keys: string, mode: string, escapeCsi: boolean): Promise<void>
+
+    /**
+     * Add global keymap by notification, `:h nvim_set_keymap`
+     */
+    setKeymap(mode: string, lhs: string, rhs: string, opts?: BufferKeymapOption): void
+
+    /**
+     * Delete global keymap, `:h nvim_del_keymap`
+     */
+    deleteKeymap(mode: string, lhs: string): void
 
     /**
      * Queues raw user-input. Unlike |nvim_feedkeys()|, this uses a
@@ -2645,27 +4472,6 @@ declare module 'coc.nvim' {
     unsubscribe(event: string): Promise<void>
 
     /**
-     * Activates UI events on the channel.
-     *
-     * **Note:** works on neovim only.
-     */
-    uiAttach(width: number, height: number, options: UiAttachOptions): Promise<void>
-
-    /**
-     * `:h nvim_ui_try_resize`
-     *
-     * **Note:** works on neovim only.
-     */
-    uiTryResize(width: number, height: number): Promise<void>
-
-    /**
-     * Deactivates UI events on the channel.
-     *
-     * **Note:** works on neovim only.
-     */
-    uiDetach(): Promise<void>
-
-    /**
      * Quit vim.
      */
     quit(): Promise<void>
@@ -2688,12 +4494,17 @@ declare module 'coc.nvim' {
     changedtick: Promise<number>
 
     /**
-     * Add buffer keymap by notification.
+     * Add buffer keymap by notification, `:h nvim_buf_set_keymap`
      */
     setKeymap(mode: string, lhs: string, rhs: string, opts?: BufferKeymapOption): void
 
     /**
-     * Removes an ext mark by notification.
+     * Delete buffer keymap, `:h nvim_buf_del_keymap`
+     */
+    deleteKeymap(mode: string, lhs: string): void
+
+    /**
+     * Removes an ext mark by notification. Neovim only.
      *
      * @public
      * @param {number} ns_id - Namespace id
@@ -2702,7 +4513,7 @@ declare module 'coc.nvim' {
     deleteExtMark(ns_id: number, id: number): void
 
     /**
-     * Gets the position (0-indexed) of an extmark.
+     * Gets the position (0-indexed) of an extmark. Neovim only.
      *
      * @param {number} ns_id - Namespace id
      * @param {number} id - Extmark id
@@ -2766,23 +4577,24 @@ declare module 'coc.nvim' {
     getSigns(opts: SignPlacedOption): Promise<SignItem[]>
 
     /**
-     * Get highlight items by namespace (end exclusive).
+     * Get highlight items by namespace (end inclusive).
      *
-     * @param {string | number} ns Namespace key or id.
+     * @param {string} ns Namespace key or id.
      * @param {number} start 0 based line number, default to 0.
      * @param {number} end 0 based line number, default to -1.
      */
-    getHighlights(ns: string | number, start?: number, end?: number): Promise<HighlightItem[]>
+    getHighlights(ns: string, start?: number, end?: number): Promise<HighlightItem[]>
 
     /**
      * Update namespaced highlights in range by notification.
+     * Priority default to 0 on vim and 4096 on neovim.
+     * Note: timer used for whole buffer highlights for better performance.
      *
-     * @param {string | number} ns Namespace key or id.
+     * @param {string} ns Namespace key.
      * @param {HighlightItem[]} highlights Highlight items.
-     * @param {number} start 0 based line number, default to 0.
-     * @param {number} end 0 based line number, default to -1.
+     * @param {HighlightOption} opts Highlight options.
      */
-    updateHighlights(ns: string | number, highlights: HighlightItem[], start?: number, end?: number): void
+    updateHighlights(ns: string, highlights: ExtendedHighlightItem[], opts?: HighlightOption): void
 
     /**
      * Gets a map of buffer-local |user-commands|.
@@ -2797,17 +4609,17 @@ declare module 'coc.nvim' {
     getLines(opts?: { start: number, end: number, strictIndexing?: boolean }): Promise<string[]>
 
     /**
-     * Set lines of buffer given indeces use request.
+     * Set lines of buffer given indices use request.
      */
     setLines(lines: string[], opts?: { start: number, end: number, strictIndexing?: boolean }): Promise<void>
 
     /**
-     * Set lines of buffer given indeces use notification.
+     * Set lines of buffer given indices use notification.
      */
     setLines(lines: string[], opts: { start: number, end: number, strictIndexing?: boolean }, isNotify: true): void
 
     /**
-     * Set virtual text for a line
+     * Set virtual text for a line use notification, works on both neovim and vim9.
      *
      * @public
      * @param {number} src_id - Source group to use or 0 to use a new group, or -1
@@ -2816,7 +4628,7 @@ declare module 'coc.nvim' {
      * @param {[index} opts
      * @returns {Promise<number>}
      */
-    setVirtualText(src_id: number, line: number, chunks: [string, string][], opts?: { [index: string]: any }): Promise<number>
+    setVirtualText(src_id: number, line: number, chunks: [string, string][], opts?: VirtualTextOption): void
 
     /**
      * Append a string or list of lines to end of buffer
@@ -2887,7 +4699,7 @@ declare module 'coc.nvim' {
     /**
      * Clear highlights of specified lins.
      *
-     * @deprecated use clearNamespace instead.
+     * @deprecated use clearNamespace() instead.
      */
     clearHighlight(args?: BufferClearHighlight)
 
@@ -3223,6 +5035,9 @@ declare module 'coc.nvim' {
     word: string
     abbr?: string
     menu?: string
+    /**
+     * @deprecated use documentation property.
+     */
     info?: string
     kind?: string
     icase?: number
@@ -3230,26 +5045,73 @@ declare module 'coc.nvim' {
     dup?: number
     empty?: number
     user_data?: string
+    /**
+     * The same as deprecated tag.
+     */
+    deprecated?: boolean
+    /**
+     * Additional details for a completion item label.
+     */
+    labelDetails?: CompletionItemLabelDetails
+    /**
+     * A string that should be used when comparing this item
+     * with other items. When `falsy` the [word](#VimCompleteItem.word)
+     * is used.
+     */
+    sortText?: string
+    /**
+     * A string that should be used when filtering a set of
+     * completion items. When `falsy` the [word](#VimCompleteItem.word)
+     * is used.
+     */
+    filterText?: string
+    /**
+     * Text to insert, could be snippet text.
+     */
+    insertText?: string
+    /**
+     * When `true` and onCompleteDone handler not exits on source, the snippet
+     * would be expanded after confirm completion.
+     */
+    isSnippet?: boolean
+    /**
+     * Docs to shown in detail window.
+     */
+    documentation?: Documentation[]
+  }
+
+  export interface CompleteDoneItem {
+    readonly word: string
+    readonly abbr?: string
+    readonly source: string
+    readonly isSnippet: boolean
+    readonly kind?: string
+    readonly menu?: string
+    readonly user_data?: string
   }
 
   export interface LocationListItem {
     bufnr: number
     lnum: number
+    end_lnum: number
     col: number
+    end_col: number
     text: string
     type: string
   }
 
   export interface QuickfixItem {
     uri?: string
-    bufnr?: number
     module?: string
     range?: Range
     text?: string
     type?: string
     filename?: string
+    bufnr?: number
     lnum?: number
+    end_lnum?: number
     col?: number
+    end_col?: number
     valid?: boolean
     nr?: number
   }
@@ -3295,11 +5157,36 @@ declare module 'coc.nvim' {
   /**
    * Supported provider names.
    */
-  export type ProviderName = 'rename' | 'onTypeEdit' | 'documentLink' | 'documentColor'
-    | 'foldingRange' | 'format' | 'codeAction' | 'workspaceSymbols' | 'formatRange' | 'formatOnType'
-    | 'hover' | 'signature' | 'documentSymbol' | 'documentHighlight' | 'definition'
-    | 'declaration' | 'typeDefinition' | 'reference' | 'implementation'
-    | 'codeLens' | 'selectionRange' | 'callHierarchy' | 'semanticTokens' | 'linkedEditing'
+  export enum ProviderName {
+    FormatOnType = 'formatOnType',
+    Rename = 'rename',
+    OnTypeEdit = 'onTypeEdit',
+    DocumentLink = 'documentLink',
+    DocumentColor = 'documentColor',
+    FoldingRange = 'foldingRange',
+    Format = 'format',
+    CodeAction = 'codeAction',
+    FormatRange = 'formatRange',
+    Hover = 'hover',
+    Signature = 'signature',
+    WorkspaceSymbols = 'workspaceSymbols',
+    DocumentSymbol = 'documentSymbol',
+    DocumentHighlight = 'documentHighlight',
+    Definition = 'definition',
+    Declaration = 'declaration',
+    TypeDefinition = 'typeDefinition',
+    Reference = 'reference',
+    Implementation = 'implementation',
+    CodeLens = 'codeLens',
+    SelectionRange = 'selectionRange',
+    CallHierarchy = 'callHierarchy',
+    SemanticTokens = 'semanticTokens',
+    SemanticTokensRange = 'semanticTokensRange',
+    LinkedEditing = 'linkedEditing',
+    InlayHint = 'inlayHint',
+    InlineValue = 'inlineValue',
+    TypeHierarchy = 'typeHierarchy'
+  }
 
   /**
    * The completion item provider interface defines the contract between extensions and
@@ -3327,7 +5214,7 @@ declare module 'coc.nvim' {
      * The lack of a result can be signaled by returning `undefined`, `null`, or an empty array.
      */
     provideCompletionItems(
-      document: TextDocument,
+      document: LinesTextDocument,
       position: Position,
       token: CancellationToken,
       context?: CompletionContext
@@ -3367,7 +5254,7 @@ declare module 'coc.nvim' {
      * signaled by returning `undefined` or `null`.
      */
     provideHover(
-      document: TextDocument,
+      document: LinesTextDocument,
       position: Position,
       token: CancellationToken
     ): ProviderResult<Hover>
@@ -3389,7 +5276,7 @@ declare module 'coc.nvim' {
      * signaled by returning `undefined` or `null`.
      */
     provideDefinition(
-      document: TextDocument,
+      document: LinesTextDocument,
       position: Position,
       token: CancellationToken
     ): ProviderResult<Definition | DefinitionLink[]>
@@ -3405,7 +5292,7 @@ declare module 'coc.nvim' {
      * Provide the declaration of the symbol at the given position and document.
      */
     provideDeclaration(
-      document: TextDocument,
+      document: LinesTextDocument,
       position: Position,
       token: CancellationToken
     ): ProviderResult<Definition | DefinitionLink[]>
@@ -3426,7 +5313,7 @@ declare module 'coc.nvim' {
      * signaled by returning `undefined` or `null`.
      */
     provideSignatureHelp(
-      document: TextDocument,
+      document: LinesTextDocument,
       position: Position,
       token: CancellationToken,
       context: SignatureHelpContext
@@ -3448,21 +5335,10 @@ declare module 'coc.nvim' {
      * signaled by returning `undefined` or `null`.
      */
     provideTypeDefinition(
-      document: TextDocument,
+      document: LinesTextDocument,
       position: Position,
       token: CancellationToken
     ): ProviderResult<Definition | DefinitionLink[]>
-  }
-
-  /**
-   * Value-object that contains additional information when
-   * requesting references.
-   */
-  export interface ReferenceContext {
-    /**
-     * Include the declaration of the current symbol.
-     */
-    includeDeclaration: boolean
   }
 
   /**
@@ -3481,7 +5357,7 @@ declare module 'coc.nvim' {
      * signaled by returning `undefined`, `null`, or an empty array.
      */
     provideReferences(
-      document: TextDocument,
+      document: LinesTextDocument,
       position: Position,
       context: ReferenceContext,
       token: CancellationToken
@@ -3507,7 +5383,7 @@ declare module 'coc.nvim' {
      * @param token A cancellation token.
      */
     provideFoldingRanges(
-      document: TextDocument,
+      document: LinesTextDocument,
       context: FoldingContext,
       token: CancellationToken
     ): ProviderResult<FoldingRange[]>
@@ -3527,13 +5403,13 @@ declare module 'coc.nvim' {
      * signaled by returning `undefined`, `null`, or an empty array.
      */
     provideDocumentSymbols(
-      document: TextDocument,
+      document: LinesTextDocument,
       token: CancellationToken
     ): ProviderResult<SymbolInformation[] | DocumentSymbol[]>
   }
 
   /**
-   * The implemenetation provider interface defines the contract between extensions and
+   * The implementation provider interface defines the contract between extensions and
    * the go to implementation feature.
    */
   export interface ImplementationProvider {
@@ -3547,7 +5423,7 @@ declare module 'coc.nvim' {
      * signaled by returning `undefined` or `null`.
      */
     provideImplementation(
-      document: TextDocument,
+      document: LinesTextDocument,
       position: Position,
       token: CancellationToken
     ): ProviderResult<Definition | DefinitionLink[]>
@@ -3561,7 +5437,7 @@ declare module 'coc.nvim' {
     /**
      * Project-wide search for a symbol matching the given query string. It is up to the provider
      * how to search given the query string, like substring, indexOf etc. To improve performance implementors can
-     * skip the [location](#SymbolInformation.location) of symbols and implement `resolveWorkspaceSymbol` to do that
+     * skip the [location](#WorkspaceSymbol.location) of symbols and implement `resolveWorkspaceSymbol` to do that
      * later.
      *
      * The `query`-parameter should be interpreted in a *relaxed way* as the editor will apply its own highlighting
@@ -3577,10 +5453,10 @@ declare module 'coc.nvim' {
     provideWorkspaceSymbols(
       query: string,
       token: CancellationToken
-    ): ProviderResult<SymbolInformation[]>
+    ): ProviderResult<WorkspaceSymbol[]>
 
     /**
-     * Given a symbol fill in its [location](#SymbolInformation.location). This method is called whenever a symbol
+     * Given a symbol fill in its [location](#WorkspaceSymbol.location). This method is called whenever a symbol
      * is selected in the UI. Providers can implement this method and return incomplete symbols from
      * [`provideWorkspaceSymbols`](#WorkspaceSymbolProvider.provideWorkspaceSymbols) which often helps to improve
      * performance.
@@ -3592,9 +5468,9 @@ declare module 'coc.nvim' {
      * the given `symbol` is used.
      */
     resolveWorkspaceSymbol?(
-      symbol: SymbolInformation,
+      symbol: WorkspaceSymbol,
       token: CancellationToken
-    ): ProviderResult<SymbolInformation>
+    ): ProviderResult<WorkspaceSymbol>
   }
 
   /**
@@ -3614,7 +5490,7 @@ declare module 'coc.nvim' {
      * signaled by returning `undefined` or `null`.
      */
     provideRenameEdits(
-      document: TextDocument,
+      document: LinesTextDocument,
       position: Position,
       newName: string,
       token: CancellationToken
@@ -3631,7 +5507,7 @@ declare module 'coc.nvim' {
      * @return The range or range and placeholder text of the identifier that is to be renamed. The lack of a result can signaled by returning `undefined` or `null`.
      */
     prepareRename?(
-      document: TextDocument,
+      document: LinesTextDocument,
       position: Position,
       token: CancellationToken
     ): ProviderResult<Range | { range: Range; placeholder: string }>
@@ -3652,7 +5528,7 @@ declare module 'coc.nvim' {
      * signaled by returning `undefined`, `null`, or an empty array.
      */
     provideDocumentFormattingEdits(
-      document: TextDocument,
+      document: LinesTextDocument,
       options: FormattingOptions,
       token: CancellationToken
     ): ProviderResult<TextEdit[]>
@@ -3678,7 +5554,7 @@ declare module 'coc.nvim' {
      * signaled by returning `undefined`, `null`, or an empty array.
      */
     provideDocumentRangeFormattingEdits(
-      document: TextDocument,
+      document: LinesTextDocument,
       range: Range,
       options: FormattingOptions,
       token: CancellationToken
@@ -3704,7 +5580,7 @@ declare module 'coc.nvim' {
      * signaled by returning `undefined`, `null`, or an empty array.
      */
     provideCodeActions(
-      document: TextDocument,
+      document: LinesTextDocument,
       range: Range,
       context: CodeActionContext,
       token: CancellationToken
@@ -3753,7 +5629,7 @@ declare module 'coc.nvim' {
      * signaled by returning `undefined`, `null`, or an empty array.
      */
     provideDocumentHighlights(
-      document: TextDocument,
+      document: LinesTextDocument,
       position: Position,
       token: CancellationToken
     ): ProviderResult<DocumentHighlight[]>
@@ -3774,7 +5650,7 @@ declare module 'coc.nvim' {
      * @return An array of [document links](#DocumentLink) or a thenable that resolves to such. The lack of a result
      * can be signaled by returning `undefined`, `null`, or an empty array.
      */
-    provideDocumentLinks(document: TextDocument, token: CancellationToken): ProviderResult<DocumentLink[]>
+    provideDocumentLinks(document: LinesTextDocument, token: CancellationToken): ProviderResult<DocumentLink[]>
 
     /**
      * Given a link fill in its [target](#DocumentLink.target). This method is called when an incomplete
@@ -3804,7 +5680,7 @@ declare module 'coc.nvim' {
      * @return An array of code lenses or a thenable that resolves to such. The lack of a result can be
      * signaled by returning `undefined`, `null`, or an empty array.
      */
-    provideCodeLenses(document: TextDocument, token: CancellationToken): ProviderResult<CodeLens[]>
+    provideCodeLenses(document: LinesTextDocument, token: CancellationToken): ProviderResult<CodeLens[]>
 
     /**
      * This function will be called for each visible code lens, usually when scrolling and after
@@ -3838,7 +5714,7 @@ declare module 'coc.nvim' {
      * @return A set of text edits or a thenable that resolves to such. The lack of a result can be
      * signaled by returning `undefined`, `null`, or an empty array.
      */
-    provideOnTypeFormattingEdits(document: TextDocument, position: Position, ch: string, options: FormattingOptions, token: CancellationToken): ProviderResult<TextEdit[]>
+    provideOnTypeFormattingEdits(document: LinesTextDocument, position: Position, ch: string, options: FormattingOptions, token: CancellationToken): ProviderResult<TextEdit[]>
   }
 
   /**
@@ -3855,7 +5731,7 @@ declare module 'coc.nvim' {
      * @return An array of [color information](#ColorInformation) or a thenable that resolves to such. The lack of a result
      * can be signaled by returning `undefined`, `null`, or an empty array.
      */
-    provideDocumentColors(document: TextDocument, token: CancellationToken): ProviderResult<ColorInformation[]>
+    provideDocumentColors(document: LinesTextDocument, token: CancellationToken): ProviderResult<ColorInformation[]>
 
     /**
      * Provide [representations](#ColorPresentation) for a color.
@@ -3866,7 +5742,7 @@ declare module 'coc.nvim' {
      * @return An array of color presentations or a thenable that resolves to such. The lack of a result
      * can be signaled by returning `undefined`, `null`, or an empty array.
      */
-    provideColorPresentations(color: Color, context: { document: TextDocument; range: Range }, token: CancellationToken): ProviderResult<ColorPresentation[]>
+    provideColorPresentations(color: Color, context: { document: LinesTextDocument; range: Range }, token: CancellationToken): ProviderResult<ColorPresentation[]>
   }
 
   export interface TextDocumentContentProvider {
@@ -3880,7 +5756,7 @@ declare module 'coc.nvim' {
      * Provide textual content for a given uri.
      *
      * The editor will use the returned string-content to create a readonly
-     * [document](#TextDocument). Resources allocated should be released when
+     * [document](#LinesTextDocument). Resources allocated should be released when
      * the corresponding document has been [closed](#workspace.onDidCloseTextDocument).
      *
      * @param uri An uri which scheme matches the scheme this provider was [registered](#workspace.registerTextDocumentContentProvider) for.
@@ -3895,7 +5771,7 @@ declare module 'coc.nvim' {
      * Provide selection ranges starting at a given position. The first range must [contain](#Range.contains)
      * position and subsequent ranges must contain the previous range.
      */
-    provideSelectionRanges(document: TextDocument, positions: Position[], token: CancellationToken): ProviderResult<SelectionRange[]>
+    provideSelectionRanges(document: LinesTextDocument, positions: Position[], token: CancellationToken): ProviderResult<SelectionRange[]>
   }
 
   /**
@@ -3916,7 +5792,7 @@ declare module 'coc.nvim' {
      * @returns A call hierarchy item or a thenable that resolves to such. The lack of a result can be
      * signaled by returning `undefined` or `null`.
      */
-    prepareCallHierarchy(document: TextDocument, position: Position, token: CancellationToken): ProviderResult<CallHierarchyItem | CallHierarchyItem[]>
+    prepareCallHierarchy(document: LinesTextDocument, position: Position, token: CancellationToken): ProviderResult<CallHierarchyItem | CallHierarchyItem[]>
 
     /**
      * Provide all incoming calls for an item, e.g all callers for a method. In graph terms this describes directed
@@ -3951,7 +5827,6 @@ declare module 'coc.nvim' {
     /**
      * An optional event to signal that the semantic tokens from this provider have changed.
      */
-    // TODO: SemantiTokens
     onDidChangeSemanticTokens?: Event<void>
 
     /**
@@ -4014,7 +5889,7 @@ declare module 'coc.nvim' {
      * *NOTE*: When doing edits, it is possible that multiple edits occur until VS Code decides to invoke the semantic tokens provider.
      * *NOTE*: If the provider cannot temporarily compute semantic tokens, it can indicate this by throwing an error with the message 'Busy'.
      */
-    provideDocumentSemanticTokens(document: TextDocument, token: CancellationToken): ProviderResult<SemanticTokens>
+    provideDocumentSemanticTokens(document: LinesTextDocument, token: CancellationToken): ProviderResult<SemanticTokens>
 
     /**
      * Instead of always returning all the tokens in a file, it is possible for a `DocumentSemanticTokensProvider` to implement
@@ -4045,7 +5920,7 @@ declare module 'coc.nvim' {
      * *NOTE*: If the provider cannot compute `SemanticTokensEdits`, it can "give up" and return all the tokens in the document again.
      * *NOTE*: All edits in `SemanticTokensEdits` contain indices in the old integers array, so they all refer to the previous result state.
      */
-    provideDocumentSemanticTokensEdits?(document: TextDocument, previousResultId: string, token: CancellationToken): ProviderResult<SemanticTokens | SemanticTokensDelta>
+    provideDocumentSemanticTokensEdits?(document: LinesTextDocument, previousResultId: string, token: CancellationToken): ProviderResult<SemanticTokens | SemanticTokensDelta>
   }
 
   /**
@@ -4056,7 +5931,7 @@ declare module 'coc.nvim' {
     /**
      * @see [provideDocumentSemanticTokens](#DocumentSemanticTokensProvider.provideDocumentSemanticTokens).
      */
-    provideDocumentRangeSemanticTokens(document: TextDocument, range: Range, token: CancellationToken): ProviderResult<SemanticTokens>
+    provideDocumentRangeSemanticTokens(document: LinesTextDocument, range: Range, token: CancellationToken): ProviderResult<SemanticTokens>
   }
 
   export interface LinkedEditingRangeProvider {
@@ -4071,29 +5946,333 @@ declare module 'coc.nvim' {
      * @param token A cancellation token.
      * @return A list of ranges that can be edited together
      */
-    provideLinkedEditingRanges(document: TextDocument, position: Position, token: CancellationToken): ProviderResult<LinkedEditingRanges>
+    provideLinkedEditingRanges(document: LinesTextDocument, position: Position, token: CancellationToken): ProviderResult<LinkedEditingRanges>
+  }
+
+  /**
+   * The inlay hints provider interface defines the contract between extensions and
+   * the inlay hints feature.
+   */
+  export interface InlayHintsProvider<T extends InlayHint = InlayHint> {
+
+    /**
+     * An optional event to signal that inlay hints from this provider have changed.
+     */
+    onDidChangeInlayHints?: Event<void>
+
+    /**
+     * Provide inlay hints for the given range and document.
+     *
+     * *Note* that inlay hints that are not {@link Range.contains contained} by the given range are ignored.
+     *
+     * @param document The document in which the command was invoked.
+     * @param range The range for which inlay hints should be computed.
+     * @param token A cancellation token.
+     * @return An array of inlay hints or a thenable that resolves to such.
+     */
+    provideInlayHints(document: LinesTextDocument, range: Range, token: CancellationToken): ProviderResult<T[]>
+
+    /**
+     * Given an inlay hint fill in {@link InlayHint.tooltip tooltip}, {@link InlayHint.textEdits text edits},
+     * or complete label {@link InlayHintLabelPart parts}.
+     *
+     * *Note* that the editor will resolve an inlay hint at most once.
+     *
+     * @param hint An inlay hint.
+     * @param token A cancellation token.
+     * @return The resolved inlay hint or a thenable that resolves to such. It is OK to return the given `item`. When no result is returned, the given `item` will be used.
+     */
+    resolveInlayHint?(hint: T, token: CancellationToken): ProviderResult<T>
+  }
+
+  /**
+   * The type hierarchy provider interface describes the contract between extensions
+   * and the type hierarchy feature.
+   */
+  export interface TypeHierarchyProvider {
+
+    /**
+     * Bootstraps type hierarchy by returning the item that is denoted by the given document
+     * and position. This item will be used as entry into the type graph. Providers should
+     * return `undefined` or `null` when there is no item at the given location.
+     *
+     * @param document The document in which the command was invoked.
+     * @param position The position at which the command was invoked.
+     * @param token A cancellation token.
+     * @returns One or multiple type hierarchy items or a thenable that resolves to such. The lack of a result can be
+     * signaled by returning `undefined`, `null`, or an empty array.
+     */
+    prepareTypeHierarchy(document: LinesTextDocument, position: Position, token: CancellationToken): ProviderResult<TypeHierarchyItem[]>
+
+    /**
+     * Provide all supertypes for an item, e.g all types from which a type is derived/inherited. In graph terms this describes directed
+     * and annotated edges inside the type graph, e.g the given item is the starting node and the result is the nodes
+     * that can be reached.
+     *
+     * @param item The hierarchy item for which super types should be computed.
+     * @param token A cancellation token.
+     * @returns A set of direct supertypes or a thenable that resolves to such. The lack of a result can be
+     * signaled by returning `undefined` or `null`.
+     */
+    provideTypeHierarchySupertypes(item: TypeHierarchyItem, token: CancellationToken): ProviderResult<TypeHierarchyItem[]>
+
+    /**
+     * Provide all subtypes for an item, e.g all types which are derived/inherited from the given item. In
+     * graph terms this describes directed and annotated edges inside the type graph, e.g the given item is the starting
+     * node and the result is the nodes that can be reached.
+     *
+     * @param item The hierarchy item for which subtypes should be computed.
+     * @param token A cancellation token.
+     * @returns A set of direct subtypes or a thenable that resolves to such. The lack of a result can be
+     * signaled by returning `undefined` or `null`.
+     */
+    provideTypeHierarchySubtypes(item: TypeHierarchyItem, token: CancellationToken): ProviderResult<TypeHierarchyItem[]>
   }
   // }}
 
   // Classes {{
+  /**
+   * An error type that should be used to signal cancellation of an operation.
+   *
+   * This type can be used in response to a {@link CancellationToken cancellation token}
+   * being cancelled or when an operation is being cancelled by the
+   * executor of that operation.
+   */
+  export class CancellationError extends Error {
 
-  export interface FloatWinConfig {
-    maxHeight?: number
-    maxWidth?: number
-    preferTop?: boolean
-    autoHide?: boolean
-    offsetX?: number
-    title?: string
-    border?: number[]
-    cursorline?: boolean
-    close?: boolean
-    highlight?: string
-    borderhighlight?: string
-    modes?: string[]
-    shadow?: boolean
-    winblend?: number
-    focusable?: boolean
-    excludeImages?: boolean
+    /**
+     * Creates a new cancellation error.
+     */
+    constructor()
+  }
+
+  /**
+   * A semantic tokens builder can help with creating a `SemanticTokens` instance
+   * which contains delta encoded semantic tokens.
+   */
+  export class SemanticTokensBuilder {
+    constructor(legend?: SemanticTokensLegend)
+
+    /**
+     * Add another token.
+     *
+     * @public
+     * @param line The token start line number (absolute value).
+     * @param char The token start character (absolute value).
+     * @param length The token length in characters.
+     * @param tokenType The encoded token type.
+     * @param tokenModifiers The encoded token modifiers.
+     */
+    push(line: number, char: number, length: number, tokenType: number, tokenModifiers?: number): void
+    /**
+     * Add another token. Use only when providing a legend.
+     *
+     * @public
+     * @param range The range of the token. Must be single-line.
+     * @param tokenType The token type.
+     * @param tokenModifiers The token modifiers.
+     */
+    push(range: Range, tokenType: string, tokenModifiers?: string[]): void
+
+    /**
+     * Finish and create a `SemanticTokens` instance.
+     *
+     * @public
+     */
+    build(resultId?: string): SemanticTokens
+  }
+
+  export interface Document {
+    readonly buffer: Buffer
+    /**
+     * Document is attached to vim.
+     */
+    readonly attached: boolean
+    /**
+     * Is command line document.
+     */
+    readonly isCommandLine: boolean
+    /**
+     * `buftype` option of buffer.
+     */
+    readonly buftype: string
+    /**
+     * Text document that synchronized.
+     */
+    readonly textDocument: LinesTextDocument
+    /**
+     * Fired when document change.
+     */
+    readonly onDocumentChange: Event<DidChangeTextDocumentParams>
+    /**
+     * Get current buffer changedtick.
+     */
+    readonly changedtick: number
+    /**
+     * Scheme of document.
+     */
+    readonly schema: string
+    /**
+     * Line count of current buffer.
+     */
+    readonly lineCount: number
+    /**
+     * Window ID when buffer create, could be -1 when no window associated.
+     */
+    readonly winid: number
+    /**
+     * Returns if current document is opened with previewwindow
+     */
+    readonly previewwindow: boolean
+    /**
+     * Check if document changed after last synchronize
+     */
+    readonly dirty: boolean
+    /**
+     * Buffer number
+     */
+    readonly bufnr: number
+    /**
+     * Content of textDocument.
+     */
+    readonly content: string
+    /**
+     * Converted filetype.
+     */
+    readonly filetype: string
+    /**
+     * Main filetype of buffer, first part when buffer filetype contains dots.
+     * Same as filetype most of the time.
+     */
+    readonly languageId: string
+    readonly uri: string
+    readonly version: number
+    /**
+     * Apply text edits to document. `nvim_buf_set_text()` is used when possible
+     *
+     * @param {TextEdit[]} edits
+     * @param {boolean} joinUndo - Join further changes with the previous undo block by `:undojoin`.
+     * @param {boolean | Position} move - Move the cursor when true or from custom position.
+     * @returns {Promise<void>}
+     */
+    applyEdits(edits: TextEdit[], joinUndo?: boolean, move?: boolean | Position): Promise<void>
+
+    /**
+     * Change individual lines.
+     *
+     * @param {[number, string][]} lines
+     * @returns {void}
+     */
+    changeLines(lines: [number, string][]): Promise<void>
+
+    /**
+     * Get offset from lnum & col
+     */
+    getOffset(lnum: number, col: number): number
+
+    /**
+     * Check string is word.
+     */
+    isWord(word: string): boolean
+
+    /**
+     * Word range at position.
+     *
+     * @param {Position} position
+     * @param {string} extraChars Extra characters that should be keyword.
+     * @param {boolean} current Use current lines instead of textDocument, default to true.
+     * @returns {Range | null}
+     */
+    getWordRangeAtPosition(position: Position, extraChars?: string, current?: boolean): Range | null
+
+    /**
+     * Get ranges of word in textDocument.
+     */
+    getSymbolRanges(word: string): Range[]
+
+    /**
+     * Get line for buffer
+     *
+     * @param {number} line 0 based line index.
+     * @param {boolean} current Use textDocument lines when false, default to true.
+     * @returns {string}
+     */
+    getline(line: number, current?: boolean): string
+
+    /**
+     * Get range of current lines, zero indexed, end exclude.
+     */
+    getLines(start?: number, end?: number): string[]
+
+    /**
+     * Get variable value by key, defined by `b:coc_{key}`
+     */
+    getVar<T>(key: string, defaultValue?: T): T
+
+    /**
+     * Get position from lnum & col
+     */
+    getPosition(lnum: number, col: number): Position
+
+    /**
+     * Adjust col with new valid character before position.
+     */
+    fixStartcol(position: Position, valids: string[]): number
+
+    /**
+     * Get current content text.
+     */
+    getDocumentContent(): string
+  }
+
+  /**
+   * Represents a {@link TextEditor text editor}'s {@link TextEditor.options options}.
+   */
+  export interface TextEditorOptions {
+    /**
+     * The size in spaces a tab takes. This is used for two purposes:
+     *  - the rendering width of a tab character;
+     *  - the number of spaces to insert when {@link TextEditorOptions.insertSpaces insertSpaces} is true.
+     *
+     * When getting a text editor's options, this property will always be a number (resolved).
+    */
+    tabSize: number
+    /**
+     * When pressing Tab insert {@link TextEditorOptions.tabSize n} spaces.
+     * When getting a text editor's options, this property will always be a boolean (resolved).
+     */
+    insertSpaces: boolean
+  }
+
+  /**
+   * Represents an editor that is attached to a {@link Document document}.
+   */
+  export interface TextEditor {
+    /**
+     * The tabpageid of current editor.
+     */
+    readonly tabpageid: number
+    /**
+     * The window id of current editor.
+     */
+    readonly winid: number
+    /**
+     * The window number of current editor.
+     */
+    readonly winnr: number
+    /**
+     * The document associated with this text editor. The document will be the same for the entire lifetime of this text editor.
+     */
+    readonly document: Document
+    /**
+     * The current visible ranges in the editor (vertically).
+     * This accounts only for vertical scrolling, and not for horizontal scrolling.
+     */
+    readonly visibleRanges: readonly Range[]
+    /**
+     * Text editor options.
+     */
+    readonly options: TextEditorOptions
   }
 
   export interface Documentation {
@@ -4109,43 +6288,73 @@ declare module 'coc.nvim' {
      * Byte offset (0 based) that should be undelined.
      */
     active?: [number, number]
+    highlights?: HighlightItem[]
   }
 
   /**
-   * Float window factory for create float around current cursor, works on vim and neovim.
-   * Use `workspace.floatSupported` to check if float could work.
+   * A file glob pattern to match file paths against. This can either be a glob pattern string
+   * (like `**​/*.{ts,js}` or `*.{ts,js}`) or a {@link RelativePattern relative pattern}.
    *
-   * Float windows are automatic reused and hidden on specific events including:
-   *  - BufEnter
-   *  - InsertEnter
-   *  - InsertLeave
-   *  - MenuPopupChanged
-   *  - CursorMoved
-   *  - CursorMovedI
+   * Glob patterns can have the following syntax:
+   * * `*` to match one or more characters in a path segment
+   * * `?` to match on one character in a path segment
+   * * `**` to match any number of path segments, including none
+   * * `{}` to group conditions (e.g. `**​/*.{ts,js}` matches all TypeScript and JavaScript files)
+   * * `[]` to declare a range of characters to match in a path segment (e.g., `example.[0-9]` to match on `example.0`, `example.1`, …)
+   * * `[!...]` to negate a range of characters to match in a path segment (e.g., `example.[!0-9]` to match on `example.a`, `example.b`, but not `example.0`)
+   *
+   * Note: a backslash (`\`) is not valid within a glob pattern. If you have an existing file
+   * path to match against, consider to use the {@link RelativePattern relative pattern} support
+   * that takes care of converting any backslash into slash. Otherwise, make sure to convert
+   * any backslash to slash when creating the glob pattern.
    */
-  export class FloatFactory implements Disposable {
-    get bufnr(): number | undefined
-    get buffer(): Buffer | null
-    get window(): Window | null
-    activated(): Promise<boolean>
+  export type GlobPattern = string | RelativePattern
 
-    constructor(nvim: Neovim)
+  /**
+   * A relative pattern is a helper to construct glob patterns that are matched
+   * relatively to a base file path. The base path can either be an absolute file
+   * path as string or uri or a {@link WorkspaceFolder workspace folder}, which is the
+   * preferred way of creating the relative pattern.
+   */
+  export class RelativePattern {
 
     /**
-     * Show documentations in float window/popup around cursor.
-     * Window and buffer are reused when possible.
-     * Window is closed automatically on change buffer, InsertEnter, CursorMoved and CursorMovedI.
+     * A base file path to which this pattern will be matched against relatively.
+     */
+    baseUri: Uri
+
+    /**
+     * A file glob pattern like `*.{ts,js}` that will be matched on file paths
+     * relative to the base path.
      *
-     * @param docs List of documentations.
-     * @param config Configuration for floating window/popup.
+     * Example: Given a base of `/home/work/folder` and a file path of `/home/work/folder/index.js`,
+     * the file glob pattern will match on `index.js`.
      */
-    show(docs: Documentation[], config?: FloatWinConfig): Promise<void>
+    pattern: string
 
     /**
-     * Close float window.
+     * Creates a new relative pattern object with a base file path and pattern to match. This pattern
+     * will be matched on file paths relative to the base.
+     *
+     * Example:
+     * ```ts
+     * const folder = vscode.workspace.workspaceFolders?.[0];
+     * if (folder) {
+     *
+     *   // Match any TypeScript file in the root of this workspace folder
+     *   const pattern1 = new vscode.RelativePattern(folder, '*.ts');
+     *
+     *   // Match any TypeScript file in `someFolder` inside this workspace folder
+     *   const pattern2 = new vscode.RelativePattern(folder, 'someFolder/*.ts');
+     * }
+     * ```
+     *
+     * @param base A base to which this pattern will be matched against relatively. It is recommended
+     * to pass in a {@link WorkspaceFolder workspace folder} if the pattern should match inside the workspace.
+     * Otherwise, a uri or string should only be used if the pattern is for a file path outside the workspace.
+     * @param pattern A file glob pattern like `*.{ts,js}` that will be matched on paths relative to the base.
      */
-    close(): void
-    dispose(): void
+    constructor(base: WorkspaceFolder | Uri | string, pattern: string)
   }
 
   /**
@@ -4190,9 +6399,22 @@ declare module 'coc.nvim' {
   }
 
   export interface ListActionOptions {
+    /**
+     * No prompt stop and window switch when invoked.
+     */
     persist?: boolean
+    /**
+     * Reload list after action invoked.
+     */
     reload?: boolean
+    /**
+     * Support multiple items as execute argument.
+     */
     parallel?: boolean
+    /**
+     * Tab positioned list should be persisted (no window switch) on action invoke.
+     */
+    tabPersist?: boolean
   }
 
   export interface CommandTaskOption {
@@ -4204,23 +6426,26 @@ declare module 'coc.nvim' {
      * Arguments of command.
      */
     args: string[]
-    cwd: string
+    /**
+     * Current working directory.
+     */
+    cwd?: string
+    env?: NodeJS.ProcessEnv
     /**
      * Runs for each line, return undefined for invalid item.
      */
     onLine: (line: string) => ListItem | undefined
   }
 
-  export interface CommandTask extends ListTask {
-  }
-
   export abstract class BasicList implements IList {
     /**
      * Unique name, must be provided by implementation class.
+     * @requires
      */
     name: string
     /**
      * Default action name invoked by <cr> by default, must be provided by implementation class.
+     * @requires
      */
     defaultAction: string
     /**
@@ -4234,7 +6459,7 @@ declare module 'coc.nvim' {
     protected nvim: Neovim
     protected disposables: Disposable[]
     protected config: ListConfiguration
-    constructor(nvim: Neovim)
+    constructor()
     /**
      * Should align columns when true.
      */
@@ -4270,20 +6495,14 @@ declare module 'coc.nvim' {
     protected convertLocation(location: Location | LocationWithLine | string): Promise<Location>
     /**
      * Jump to location
-     *
-     * @method
      */
     protected jumpTo(location: Location | LocationWithLine | string, command?: string): Promise<void>
     /**
      * Preview location.
-     *
-     * @method
      */
     protected previewLocation(location: Location, context: ListContext): Promise<void>
     /**
      * Preview lines.
-     *
-     * @method
      */
     protected preview(options: PreviewOptions, context: ListContext): Promise<void>
     /**
@@ -4369,6 +6588,10 @@ declare module 'coc.nvim' {
      */
     strip?: number
     /**
+     * algorithm for check etag header with response data, used by `crypto.createHash()`.
+     */
+    etagAlgorithm?: string
+    /**
      * If true, use untar for `.tar.gz` filename
      */
     extract?: boolean | 'untar' | 'unzip'
@@ -4397,7 +6620,7 @@ declare module 'coc.nvim' {
    *
    * @return Parsed object if response content type is application/json, text if content type starts with `text/`
    */
-  export function fetch(url: string, options?: FetchOptions, token?: CancellationToken): Promise<ResponseResult>
+  export function fetch(url: string | URL, options?: FetchOptions, token?: CancellationToken): Promise<ResponseResult>
 
   /**
    * Download file from url, with optional untar/unzip support.
@@ -4407,7 +6630,7 @@ declare module 'coc.nvim' {
    * @param {string} url
    * @param {DownloadOptions} options contains dest folder and optional onProgress callback
    */
-  export function download(url: string, options: DownloadOptions, token?: CancellationToken): Promise<string>
+  export function download(url: string | URL, options: DownloadOptions, token?: CancellationToken): Promise<string>
 
   interface ExecOptions {
     cwd?: string
@@ -4419,6 +6642,7 @@ declare module 'coc.nvim' {
     uid?: number
     gid?: number
     windowsHide?: boolean
+    encoding?: string
   }
 
   /**
@@ -4437,9 +6661,15 @@ declare module 'coc.nvim' {
   export function wait(ms: number): Promise<any>
 
   /**
-   * Run command with `child_process.exec`
+   * Run command with `child_process.exec`, CancellationError is rejected when timeout or cancelled.
+   *
+   * @param {string} cmd
+   * @param {ExecOptions} opts - Execute options, encoding is used by
+   * iconv-lite for decode stdout buffer to string, default to 'utf8'
+   * @param {number | CancellationToken} timeout - Timeout in seconds or Cancellation token.
+   * @returns {Promise<string>}
    */
-  export function runCommand(cmd: string, opts?: ExecOptions, timeout?: number): Promise<string>
+  export function runCommand(cmd: string, opts?: ExecOptions, timeout?: number | CancellationToken): Promise<string>
 
   /**
    * Check if process with pid is running
@@ -4517,7 +6747,7 @@ declare module 'coc.nvim' {
      * @return A promise that resolves to the returned value of the given command. `undefined` when
      * the command handler function doesn't return anything.
      */
-    export function executeCommand(command: string, ...rest: any[]): Promise<any>
+    export function executeCommand<T>(command: string, ...rest: any[]): Promise<T>
 
     /**
      * Open uri with external tool, use `open` on mac, use `xdg-open` on linux.
@@ -4534,7 +6764,7 @@ declare module 'coc.nvim' {
      *
      * @param edit Contains snippet text and range to replace.
      */
-    export function executeCommand(command: 'editor.action.insertSnippet', edit: TextEdit): Promise<boolean>
+    export function executeCommand(command: 'editor.action.insertSnippet', edit: TextEdit, ultisnip?: UltiSnippetOption): Promise<boolean>
 
     /**
      * Invoke specified code action.
@@ -4544,7 +6774,7 @@ declare module 'coc.nvim' {
     /**
      * Trigger coc.nvim's completion at current cursor position.
      */
-    export function executeCommand(command: 'editor.action.triggerSuggest'): Promise<void>
+    export function executeCommand(command: 'editor.action.triggerSuggest', source?: string): Promise<void>
 
     /**
      * Trigger signature help at current cursor position.
@@ -4564,12 +6794,12 @@ declare module 'coc.nvim' {
     /**
      * Show locations by location list or vim's quickfix list.
      */
-    export function executeCommand(command: 'editor.action.showReferences', filepath: string | undefined, position: Position | undefined, locations: Location[]): Promise<void>
+    export function executeCommand(command: 'editor.action.showReferences', uri: string | Uri, position: Position | undefined, locations: Location[]): Promise<void>
 
     /**
      * Invoke rename action at position of specified uri.
      */
-    export function executeCommand(command: 'editor.action.rename', uri: string, position: Position): Promise<void>
+    export function executeCommand(command: 'editor.action.rename', uri: string | Uri, position: Position, newName?: string): Promise<void>
 
     /**
      * Run format action for current buffer.
@@ -4579,40 +6809,87 @@ declare module 'coc.nvim' {
   // }}
 
   // events module {{
-  type MoveEvents = 'CursorMoved' | 'CursorMovedI'
   type EventResult = void | Promise<void>
+  type MoveEvents = 'CursorMoved' | 'CursorMovedI' | 'CursorHold' | 'CursorHoldI'
   type BufEvents = 'BufHidden' | 'BufEnter' | 'BufWritePost'
-    | 'CursorHold' | 'InsertLeave' | 'TermOpen' | 'TermClose' | 'InsertEnter'
-    | 'BufCreate' | 'BufUnload' | 'BufWritePre' | 'CursorHoldI' | 'Enter'
+    | 'InsertLeave' | 'TermOpen' | 'InsertEnter'
+    | 'BufCreate' | 'BufUnload' | 'BufWritePre' | 'Enter'
   type EmptyEvents = 'FocusGained' | 'FocusLost' | 'InsertSnippet'
   type InsertChangeEvents = 'TextChangedP' | 'TextChangedI'
   type TaskEvents = 'TaskExit' | 'TaskStderr' | 'TaskStdout'
   type WindowEvents = 'WinLeave' | 'WinEnter'
-  type AllEvents = BufEvents | EmptyEvents | MoveEvents | TaskEvents | WindowEvents | InsertChangeEvents | 'CompleteDone' | 'TextChanged' | 'MenuPopupChanged' | 'InsertCharPre' | 'FileType' | 'BufWinEnter' | 'BufWinLeave' | 'VimResized' | 'DirChanged' | 'OptionSet' | 'Command' | 'BufReadCmd' | 'GlobalChange' | 'InputChar' | 'WinLeave' | 'MenuInput' | 'PromptInsert' | 'FloatBtnClick' | 'InsertSnippet'
+  type AllEvents = BufEvents | EmptyEvents | MoveEvents | TaskEvents | WindowEvents | InsertChangeEvents | 'CompleteDone' | 'TextChanged' | 'MenuPopupChanged' | 'InsertCharPre' | 'FileType' | 'BufWinEnter' | 'BufWinLeave' | 'VimResized' | 'DirChanged' | 'OptionSet' | 'Command' | 'BufReadCmd' | 'GlobalChange' | 'InputChar' | 'WinLeave' | 'MenuInput' | 'PromptInsert' | 'FloatBtnClick' | 'InsertSnippet' | 'PromptKeyPress'
   type OptionValue = string | number | boolean
+  type PromptWidowKeys = 'C-j' | 'C-k' | 'C-n' | 'C-p' | 'up' | 'down'
 
   export interface CursorPosition {
-    bufnr: number
-    lnum: number
-    col: number
-    insert: boolean
+    readonly bufnr: number
+    readonly lnum: number
+    readonly col: number
+    readonly insert: boolean
   }
 
   export interface InsertChange {
-    lnum: number
-    col: number
-    pre: string
-    changedtick: number
+    /**
+     * 1 based line number
+     */
+    readonly lnum: number
+    /**
+     * 1 based column number
+     */
+    readonly col: number
+    /**
+     * Text before cursor.
+     */
+    readonly pre: string
+    /**
+     * Insert character that cause change of this time.
+     */
+    readonly insertChar: string | undefined
+    readonly changedtick: number
   }
 
   export interface PopupChangeEvent {
-    completed_item: VimCompleteItem
-    height: number
-    width: number
-    row: number
-    col: number
-    size: number
-    scrollbar: boolean
+    /**
+     * 0 based index of item in the list.
+     */
+    readonly index: number
+    /**
+     * Word of item.
+     */
+    readonly word: string
+    /**
+     * Height of pum.
+     */
+    readonly height: number
+    /**
+     * Width of pum.
+     */
+    readonly width: number
+    /**
+     * Screen row of pum.
+     */
+    readonly row: number
+    /**
+     * Screen col of pum.
+     */
+    readonly col: number
+    /**
+     * Total length of completion list.
+     */
+    readonly size: number
+    /**
+     * Scollbar in the pum.
+     */
+    readonly scrollbar: boolean
+    /**
+     * Word is inserted.
+     */
+    readonly inserted: boolean
+    /**
+     * Caused by selection change (not initial or completed)
+     */
+    readonly move: boolean
   }
 
   /**
@@ -4622,7 +6899,7 @@ declare module 'coc.nvim' {
     /**
      * Latest cursor position.
      */
-    export const cursor: CursorPosition
+    export const cursor: Readonly<CursorPosition>
     /**
      * Latest pum position, is true when pum positioned above current line.
      */
@@ -4631,7 +6908,20 @@ declare module 'coc.nvim' {
      * Insert mode detected by latest events.
      */
     export const insertMode: boolean
-    export function on(event: EmptyEvents | AllEvents[], handler: () => EventResult, thisArg?: any, disposables?: Disposable[]): Disposable
+
+    /**
+     * Popup menu is visible.
+     */
+    export const pumvisible: boolean
+
+    /**
+     * Wait for any of event in events to fire, resolve undefined when timeout or CancellationToken requested.
+     * @param events Event names to wait.
+     * @param timeoutOrToken Timeout in miniseconds or CancellationToken.
+     * @return A [disposable](#Disposable) that unregisters this provider when being disposed.
+     */
+    export function race(events: AllEvents[], timeoutOrToken?: number | CancellationToken): Promise<{ name: AllEvents, args: unknown[] } | undefined>
+
     /**
      * Attach handler to buffer events.
      */
@@ -4653,6 +6943,11 @@ declare module 'coc.nvim' {
      */
     export function on(event: 'FloatBtnClick', handler: (bufnr: number, index: number) => EventResult, thisArg?: any, disposables?: Disposable[]): Disposable
     /**
+     * Attach handler to keypress in prompt window.
+     * Key could only be 'C-j', 'C-k', 'C-n', 'C-p', 'up' and 'down'
+     */
+    export function on(event: 'PromptKeyPress', handler: (bufnr: number, key: PromptWidowKeys) => EventResult, thisArg?: any, disposables?: Disposable[]): Disposable
+    /**
      * Fired on vim's TextChanged event.
      */
     export function on(event: 'TextChanged', handler: (bufnr: number, changedtick: number) => EventResult, thisArg?: any, disposables?: Disposable[]): Disposable
@@ -4667,7 +6962,7 @@ declare module 'coc.nvim' {
      */
     export function on(event: 'VimResized', handler: (columns: number, lines: number) => EventResult, thisArg?: any, disposables?: Disposable[]): Disposable
     export function on(event: 'MenuPopupChanged', handler: (event: PopupChangeEvent, cursorline: number) => EventResult, thisArg?: any, disposables?: Disposable[]): Disposable
-    export function on(event: 'CompleteDone', handler: (item: VimCompleteItem) => EventResult, thisArg?: any, disposables?: Disposable[]): Disposable
+    export function on(event: 'CompleteDone', handler: (item: CompleteDoneItem | {}) => EventResult, thisArg?: any, disposables?: Disposable[]): Disposable
     export function on(event: 'InsertCharPre', handler: (character: string) => EventResult, thisArg?: any, disposables?: Disposable[]): Disposable
     export function on(event: 'FileType', handler: (filetype: string, bufnr: number) => EventResult, thisArg?: any, disposables?: Disposable[]): Disposable
     export function on(event: 'BufWinEnter' | 'BufWinLeave', handler: (bufnr: number, winid: number) => EventResult, thisArg?: any, disposables?: Disposable[]): Disposable
@@ -4679,9 +6974,158 @@ declare module 'coc.nvim' {
 
     /**
      * Fired after user insert character and made change to the buffer.
-     * Fired before TextChangedI & TextChanged event.
+     * Fired after TextChangedI & TextChangedP event.
      */
     export function on(event: 'TextInsert', handler: (bufnr: number, info: InsertChange, character: string) => EventResult, thisArg?: any, disposables?: Disposable[]): Disposable
+
+    export function on(event: EmptyEvents, handler: () => EventResult, thisArg?: any, disposables?: Disposable[]): Disposable
+
+    export function on(event: AllEvents[], handler: (...args: unknown[]) => EventResult, thisArg?: any, disposables?: Disposable[]): Disposable
+  }
+  // }}
+
+  // file events {{
+  /**
+   * An event that is fired after files are created.
+   */
+  export interface FileCreateEvent {
+
+    /**
+     * The files that got created.
+     */
+    readonly files: ReadonlyArray<Uri>
+  }
+
+  /**
+   * An event that is fired when files are going to be created.
+   *
+   * To make modifications to the workspace before the files are created,
+   * call the [`waitUntil](#FileWillCreateEvent.waitUntil)-function with a
+   * thenable that resolves to a [workspace edit](#WorkspaceEdit).
+   */
+  export interface FileWillCreateEvent {
+
+    /**
+    * A cancellation token.
+    */
+    readonly token: CancellationToken
+
+    /**
+     * The files that are going to be created.
+     */
+    readonly files: ReadonlyArray<Uri>
+
+    /**
+     * Allows to pause the event and to apply a [workspace edit](#WorkspaceEdit).
+     *
+     * *Note:* This function can only be called during event dispatch and not
+     * in an asynchronous manner:
+     *
+     * ```ts
+     * workspace.onWillCreateFiles(event => {
+     *     // async, will *throw* an error
+     *     setTimeout(() => event.waitUntil(promise));
+     *
+     *     // sync, OK
+     *     event.waitUntil(promise);
+     * })
+     * ```
+     *
+     * @param thenable A thenable that delays saving.
+     */
+    waitUntil(thenable: Thenable<WorkspaceEdit | any>): void
+  }
+
+  /**
+   * An event that is fired when files are going to be deleted.
+   *
+   * To make modifications to the workspace before the files are deleted,
+   * call the [`waitUntil](#FileWillCreateEvent.waitUntil)-function with a
+   * thenable that resolves to a [workspace edit](#WorkspaceEdit).
+   */
+  export interface FileWillDeleteEvent {
+
+    /**
+     * The files that are going to be deleted.
+     */
+    readonly files: ReadonlyArray<Uri>
+
+    /**
+     * Allows to pause the event and to apply a [workspace edit](#WorkspaceEdit).
+     *
+     * *Note:* This function can only be called during event dispatch and not
+     * in an asynchronous manner:
+     *
+     * ```ts
+     * workspace.onWillCreateFiles(event => {
+     *     // async, will *throw* an error
+     *     setTimeout(() => event.waitUntil(promise));
+     *
+     *     // sync, OK
+     *     event.waitUntil(promise);
+     * })
+     * ```
+     *
+     * @param thenable A thenable that delays saving.
+     */
+    waitUntil(thenable: Thenable<WorkspaceEdit | any>): void
+  }
+
+  /**
+   * An event that is fired after files are deleted.
+   */
+  export interface FileDeleteEvent {
+
+    /**
+     * The files that got deleted.
+     */
+    readonly files: ReadonlyArray<Uri>
+  }
+
+  /**
+   * An event that is fired after files are renamed.
+   */
+  export interface FileRenameEvent {
+
+    /**
+     * The files that got renamed.
+     */
+    readonly files: ReadonlyArray<{ oldUri: Uri, newUri: Uri }>
+  }
+
+  /**
+   * An event that is fired when files are going to be renamed.
+   *
+   * To make modifications to the workspace before the files are renamed,
+   * call the [`waitUntil](#FileWillCreateEvent.waitUntil)-function with a
+   * thenable that resolves to a [workspace edit](#WorkspaceEdit).
+   */
+  export interface FileWillRenameEvent {
+
+    /**
+     * The files that are going to be renamed.
+     */
+    readonly files: ReadonlyArray<{ oldUri: Uri, newUri: Uri }>
+
+    /**
+     * Allows to pause the event and to apply a [workspace edit](#WorkspaceEdit).
+     *
+     * *Note:* This function can only be called during event dispatch and not
+     * in an asynchronous manner:
+     *
+     * ```ts
+     * workspace.onWillCreateFiles(event => {
+     * 	// async, will *throw* an error
+     * 	setTimeout(() => event.waitUntil(promise));
+     *
+     * 	// sync, OK
+     * 	event.waitUntil(promise);
+     * })
+     * ```
+     *
+     * @param thenable A thenable that delays saving.
+     */
+    waitUntil(thenable: Thenable<WorkspaceEdit | any>): void
   }
   // }}
 
@@ -4694,6 +7138,11 @@ declare module 'coc.nvim' {
   }
 
   export namespace languages {
+
+    /**
+     * Check if specific provider exists for document.
+     */
+    export function hasProvider(id: ProviderName, document: TextDocumentMatch): boolean
     /**
      * Create a diagnostics collection.
      *
@@ -4754,7 +7203,7 @@ declare module 'coc.nvim' {
      * @param codeActionKinds Optional supported code action kinds.
      * @return A [disposable](#Disposable) that unregisters this provider when being disposed.
      */
-    export function registerCodeActionProvider(selector: DocumentSelector, provider: CodeActionProvider, clientId: string | undefined, codeActionKinds?: string[]): Disposable
+    export function registerCodeActionProvider(selector: DocumentSelector, provider: CodeActionProvider, clientId: string | undefined, codeActionKinds?: ReadonlyArray<string>): Disposable
 
     /**
      * Register a hover provider.
@@ -4836,7 +7285,7 @@ declare module 'coc.nvim' {
      * @param provider A document highlight provider.
      * @return A [disposable](#Disposable) that unregisters this provider when being disposed.
      */
-    export function registerDocumentHighlightProvider(selector: DocumentSelector, provider: any): Disposable
+    export function registerDocumentHighlightProvider(selector: DocumentSelector, provider: DocumentHighlightProvider): Disposable
 
     /**
      * Register a code lens provider.
@@ -5051,6 +7500,28 @@ declare module 'coc.nvim' {
      * @return A {@link Disposable} that unregisters this provider when being disposed.
      */
     export function registerLinkedEditingRangeProvider(selector: DocumentSelector, provider: LinkedEditingRangeProvider): Disposable
+
+    /**
+     * Register a inlay hints provider.
+     *
+     * Multiple providers can be registered for a language. In that case providers are asked in
+     * parallel and the results are merged. A failing provider (rejected promise or exception) will
+     * not cause a failure of the whole operation.
+     *
+     * @param selector A selector that defines the documents this provider is applicable to.
+     * @param provider An inlay hints provider.
+     * @return A {@link Disposable} that unregisters this provider when being disposed.
+     */
+    export function registerInlayHintsProvider(selector: DocumentSelector, provider: InlayHintsProvider): Disposable
+
+    /**
+     * Register a type hierarchy provider.
+     *
+     * @param selector A selector that defines the documents this provider is applicable to.
+     * @param provider A type hierarchy provider.
+     * @return A {@link Disposable} that unregisters this provider when being disposed.
+     */
+    export function registerTypeHierarchyProvider(selector: DocumentSelector, provider: TypeHierarchyProvider): Disposable
   }
   // }}
 
@@ -5083,9 +7554,17 @@ declare module 'coc.nvim' {
     /**
      * Register languageClient as service provider.
      */
+    export function registerLanguageClient(client: LanguageClient): Disposable
+    /**
+     * @deprecated use registerLanguageClient instead.
+     */
     export function registLanguageClient(client: LanguageClient): Disposable
     /**
      * Register service, nothing happens when `service.id` already exists.
+     */
+    export function register(service: IServiceProvider): Disposable
+    /**
+     * @deprecated use register instead.
      */
     export function regist(service: IServiceProvider): Disposable
     /**
@@ -5107,7 +7586,23 @@ declare module 'coc.nvim' {
   /**
    * Source options to create source that could respect configuration from `coc.source.{name}`
    */
-  export type SourceConfig = Omit<ISource, 'shortcut' | 'priority' | 'triggerOnly' | 'triggerCharacters' | 'triggerPatterns' | 'enable' | 'filetypes' | 'disableSyntaxes'>
+  export interface SourceConfig {
+    name: string
+    triggerOnly?: boolean
+    isSnippet?: boolean
+    sourceType?: SourceType
+    filepath?: string
+    documentSelector?: DocumentSelector
+    firstMatch?: boolean
+    refresh?(): Promise<void>
+    toggle?(): void
+    onEnter?(bufnr: number): void
+    shouldComplete?(opt: CompleteOption): ProviderResult<boolean>
+    doComplete(opt: CompleteOption, token: CancellationToken): ProviderResult<CompleteResult>
+    onCompleteResolve?(item: VimCompleteItem, opt: CompleteOption, token: CancellationToken): ProviderResult<void>
+    onCompleteDone?(item: VimCompleteItem, opt: CompleteOption, snippetsSupport?: boolean): ProviderResult<void>
+    shouldCommit?(item: VimCompleteItem, character: string): boolean
+  }
 
   export interface SourceStat {
     name: string
@@ -5127,11 +7622,9 @@ declare module 'coc.nvim' {
   }
 
   export interface CompleteResult {
-    items: VimCompleteItem[]
+    items: ReadonlyArray<VimCompleteItem>
     isIncomplete?: boolean
     startcol?: number
-    source?: string
-    priority?: number
   }
 
   // option on complete & should_complete
@@ -5159,19 +7652,19 @@ declare module 'coc.nvim' {
      */
     readonly word: string
     /**
-     * Trigger character, could be empty string.
+     * Trigger character, could be undefined.
      */
-    readonly triggerCharacter: string
+    readonly triggerCharacter?: string
     /**
      * Col of cursor, 1 based.
      */
     readonly colnr: number
     readonly linenr: number
-    readonly synname: string
     /**
-     * Black list words specified by user.
+     * Position of cursor when trigger completion
      */
-    readonly blacklist: string[]
+    readonly position: Position
+    readonly synname: string
     /**
      * Buffer changetick
      */
@@ -5228,10 +7721,10 @@ declare module 'coc.nvim' {
      * @param {CompleteOption} opt
      * @returns {Promise<boolean> }
      */
-    shouldComplete?(opt: CompleteOption): Promise<boolean>
+    shouldComplete?(opt: CompleteOption): ProviderResult<boolean>
 
     /**
-     * Run completion
+     * Invoke completion
      *
      * @public
      * @param {CompleteOption} opt
@@ -5280,7 +7773,7 @@ declare module 'coc.nvim' {
     /**
      * Add source to sources list.
      *
-     * Note: Use `sources.createSource()` for regist new source is recommended for
+     * Note: Use `sources.createSource()` to register new source is recommended for
      * user configuration support.
      */
     export function addSource(source: ISource): Disposable
@@ -5425,6 +7918,10 @@ declare module 'coc.nvim' {
    */
   export interface TreeViewOptions<T> {
     /**
+     * bufhidden option for TreeView, default to 'wipe'
+     */
+    bufhidden?: 'hide' | 'unload' | 'delete' | 'wipe'
+    /**
      * Fixed width for window, default to true
      */
     winfixwidth?: boolean
@@ -5564,8 +8061,9 @@ declare module 'coc.nvim' {
      * **NOTE:** TreeView with same viewId in current tab would be disposed.
      *
      * @param splitCommand The command to open TreeView window, default to 'belowright 30vs'
+     * @return `true` if window shown.
      */
-    show(splitCommand?: string): Promise<void>
+    show(splitCommand?: string): Promise<boolean>
   }
 
   /**
@@ -5653,7 +8151,7 @@ declare module 'coc.nvim' {
      * @param resource A resource URI.
      * @return `true` if the given section for the given resource (if provided) is affected.
      */
-    affectsConfiguration(section: string, resource?: string): boolean
+    affectsConfiguration(section: string, scope?: ConfigurationScope): boolean
   }
 
   export interface WillSaveEvent extends TextDocumentWillSaveEvent {
@@ -5684,19 +8182,19 @@ declare module 'coc.nvim' {
     /**
      * Use request instead of notify, default true
      */
-    sync: boolean
+    sync?: boolean
     /**
      * Cancel completion before invoke callback, default true
      */
-    cancel: boolean
+    cancel?: boolean
     /**
-     * Use <silent> for keymap, default false
+     * Use <silent> for keymap, default true.
      */
-    silent: boolean
+    silent?: boolean
     /**
      * Enable repeat support for repeat.vim, default false
      */
-    repeat: boolean
+    repeat?: boolean
   }
 
   export interface DidChangeTextDocumentParams {
@@ -5705,7 +8203,7 @@ declare module 'coc.nvim' {
      * to the version after all provided content changes have
      * been applied.
      */
-    textDocument: {
+    readonly textDocument: {
       version: number
       uri: string
     }
@@ -5716,23 +8214,27 @@ declare module 'coc.nvim' {
      * S to S' and c2 from S' to S''. So c1 is computed on the state S and c2 is computed
      * on the state S'.
      */
-    contentChanges: TextDocumentContentChange[]
+    readonly contentChanges: ReadonlyArray<TextDocumentContentChange>
     /**
      * Buffer number of document.
      */
-    bufnr: number
+    readonly bufnr: number
     /**
      * Original content before change
      */
-    original: string
+    readonly original: string
+    /**
+     * Original lines before change
+     */
+    readonly originalLines: ReadonlyArray<string>
   }
 
   export interface EditerState {
-    document: TextDocument
+    document: LinesTextDocument
     position: Position
   }
 
-  export type MapMode = 'n' | 'i' | 'v' | 'x' | 's' | 'o'
+  export type MapMode = 'n' | 'i' | 'v' | 'x' | 's' | 'o' | '!'
 
   export interface Autocmd {
     /**
@@ -5763,13 +8265,13 @@ declare module 'coc.nvim' {
 
   export interface Env {
     /**
-     * |completeopt| option of (neo)vim.
-     */
-    readonly completeOpt: string
-    /**
      * |runtimepath| option of (neo)vim.
      */
     readonly runtimepath: string
+    /**
+     * |virtualText| support in (neo)vim
+     */
+    readonly virtualText: boolean
     /**
      * |guicursor| option of (neo)vim
      */
@@ -5827,7 +8329,7 @@ declare module 'coc.nvim' {
      */
     readonly isiTerm: boolean
     /**
-     * version of (neo)vim, on vim it's like: 8020750, on neoivm it's like: 0.5.0
+     * version of (neo)vim, on vim it's like: 8020750, on neoivm it's like
      */
     readonly version: string
     /**
@@ -5835,7 +8337,7 @@ declare module 'coc.nvim' {
      */
     readonly progpath: string
     /**
-     * Is true when dialog feature is supported, which need vim >= 8.2.750 or neovim >= 0.4.0
+     * Is true when dialog feature is supported
      */
     readonly dialog: boolean
     /**
@@ -5844,230 +8346,8 @@ declare module 'coc.nvim' {
     readonly textprop: boolean
   }
 
-  export interface TerminalOptions {
-    /**
-     * A human-readable string which will be used to represent the terminal in the UI.
-     */
-    name?: string
-
-    /**
-     * A path to a custom shell executable to be used in the terminal.
-     */
-    shellPath?: string
-
-    /**
-     * Args for the custom shell executable, this does not work on Windows (see #8429)
-     */
-    shellArgs?: string[]
-
-    /**
-     * A path or URI for the current working directory to be used for the terminal.
-     */
-    cwd?: string
-
-    /**
-     * Object with environment variables that will be added to the VS Code process.
-     */
-    env?: { [key: string]: string | null }
-
-    /**
-     * Whether the terminal process environment should be exactly as provided in
-     * `TerminalOptions.env`. When this is false (default), the environment will be based on the
-     * window's environment and also apply configured platform settings like
-     * `terminal.integrated.windows.env` on top. When this is true, the complete environment
-     * must be provided as nothing will be inherited from the process or any configuration.
-     */
-    strictEnv?: boolean
-  }
-
   /**
-   * An individual terminal instance within the integrated terminal.
-   */
-  export interface Terminal {
-
-    /**
-     * The bufnr of terminal buffer.
-     */
-    readonly bufnr: number
-
-    /**
-     * The name of the terminal.
-     */
-    readonly name: string
-
-    /**
-     * The process ID of the shell process.
-     */
-    readonly processId: Promise<number>
-
-    /**
-     * Send text to the terminal. The text is written to the stdin of the underlying pty process
-     * (shell) of the terminal.
-     *
-     * @param text The text to send.
-     * @param addNewLine Whether to add a new line to the text being sent, this is normally
-     * required to run a command in the terminal. The character(s) added are \n or \r\n
-     * depending on the platform. This defaults to `true`.
-     */
-    sendText(text: string, addNewLine?: boolean): void
-
-    /**
-     * Show the terminal panel and reveal this terminal in the UI, return false when failed.
-     *
-     * @param preserveFocus When `true` the terminal will not take focus.
-     */
-    show(preserveFocus?: boolean): Promise<boolean>
-
-    /**
-     * Hide the terminal panel if this terminal is currently showing.
-     */
-    hide(): void
-
-    /**
-     * Dispose and free associated resources.
-     */
-    dispose(): void
-  }
-
-  export interface Document {
-    readonly buffer: Buffer
-    /**
-     * Document is attached to vim.
-     */
-    readonly attached: boolean
-    /**
-     * Is command line document.
-     */
-    readonly isCommandLine: boolean
-    /**
-     * `buftype` option of buffer.
-     */
-    readonly buftype: string
-    /**
-     * Text document that synchronized.
-     */
-    readonly textDocument: TextDocument
-    /**
-     * Fired when document change.
-     */
-    readonly onDocumentChange: Event<DidChangeTextDocumentParams>
-    /**
-     * Fired on document detach.
-     */
-    readonly onDocumentDetach: Event<number>
-    /**
-     * Get current buffer changedtick.
-     */
-    readonly changedtick: number
-    /**
-     * Scheme of document.
-     */
-    readonly schema: string
-    /**
-     * Line count of current buffer.
-     */
-    readonly lineCount: number
-    /**
-     * Window ID when buffer create, could be -1 when no window associated.
-     */
-    readonly winid: number
-    /**
-     * Returns if current document is opended with previewwindow
-     */
-    readonly previewwindow: boolean
-    /**
-     * Check if document changed after last synchronize
-     */
-    readonly dirty: boolean
-    /**
-     * Buffer number
-     */
-    readonly bufnr: number
-    /**
-     * Content of textDocument.
-     */
-    readonly content: string
-    /**
-     * Converted filetype.
-     */
-    readonly filetype: string
-    readonly uri: string
-    readonly version: number
-    /**
-     * Apply textEdits to current buffer lines, fire content change event.
-     */
-    applyEdits(edits: TextEdit[]): Promise<void>
-
-    /**
-     * Change individual lines.
-     *
-     * @param {[number, string][]} lines
-     * @returns {void}
-     */
-    changeLines(lines: [number, string][]): Promise<void>
-
-    /**
-     * Get offset from lnum & col
-     */
-    getOffset(lnum: number, col: number): number
-
-    /**
-     * Check string is word.
-     */
-    isWord(word: string): boolean
-
-    /**
-     * Word range at position.
-     *
-     * @param {Position} position
-     * @param {string} extraChars Extra characters that should be keyword.
-     * @param {boolean} current Use current lines instead of textDocument, default to true.
-     * @returns {Range | null}
-     */
-    getWordRangeAtPosition(position: Position, extraChars?: string, current?: boolean): Range | null
-
-    /**
-     * Get ranges of word in textDocument.
-     */
-    getSymbolRanges(word: string): Range[]
-
-    /**
-     * Get line for buffer
-     *
-     * @param {number} line 0 based line index.
-     * @param {boolean} current Use textDocument lines when false, default to true.
-     * @returns {string}
-     */
-    getline(line: number, current?: boolean): string
-
-    /**
-     * Get range of current lines, zero indexed, end exclude.
-     */
-    getLines(start?: number, end?: number): string[]
-
-    /**
-     * Get variable value by key, defined by `b:coc_{key}`
-     */
-    getVar<T>(key: string, defaultValue?: T): T
-
-    /**
-     * Get position from lnum & col
-     */
-    getPosition(lnum: number, col: number): Position
-
-    /**
-     * Adjust col with new valid character before position.
-     */
-    fixStartcol(position: Position, valids: string[]): number
-
-    /**
-     * Get current content text.
-     */
-    getDocumentContent(): string
-  }
-
-  /**
-   * Store & retrive most recent used items.
+   * Store & retrieve most recent used items.
    */
   export interface Mru {
     /**
@@ -6210,11 +8490,23 @@ declare module 'coc.nvim' {
     dispose(): void
   }
 
+  export type ConfigurationScope = string | null | Uri | TextDocument | WorkspaceFolder | { uri?: string; languageId?: string }
+
   export interface ConfigurationInspect<T> {
     key: string
     defaultValue?: T
     globalValue?: T
     workspaceValue?: T
+    workspaceFolderValue?: T
+  }
+
+  export enum ConfigurationTarget {
+    Global = 1,
+    /**
+     * Not exists with coc.nvim yet.
+     */
+    Workspace = 2,
+    WorkspaceFolder = 3
   }
 
   export interface WorkspaceConfiguration {
@@ -6256,14 +8548,15 @@ declare module 'coc.nvim' {
      */
     inspect<T>(section: string): ConfigurationInspect<T> | undefined
     /**
-     * Update a configuration value. The updated configuration values are persisted.
-     *
+     * Update a configuration value.
+     * The updated configuration values are persisted to configuration file.
      *
      * @param section Configuration name, supports _dotted_ names.
      * @param value The new value.
-     * @param isUser if true, always update user configuration
+     * @param updateTarget Target of configuration, use global user configuration when is `true`,
+     *                     when `false` or undefined use workspace folder confirmation.
      */
-    update(section: string, value: any, isUser?: boolean): void
+    update(section: string, value: any, updateTarget?: ConfigurationTarget | boolean): Thenable<void>
 
     /**
      * Readable dictionary that backs this configuration.
@@ -6277,9 +8570,13 @@ declare module 'coc.nvim' {
      */
     dispose: () => void
     /**
-     * Called on buffer change.
+     * Called on buffer content change.
      */
     onChange?(e: DidChangeTextDocumentParams): void
+    /**
+     * Called on TextChangedI & TextChanged events.
+     */
+    onTextChange?(): void
   }
 
   export interface BufferSync<T extends BufferSyncItem> {
@@ -6296,6 +8593,111 @@ declare module 'coc.nvim' {
      */
     getItem(bufnr: number): T | undefined
     dispose: () => void
+  }
+
+  export interface FuzzyMatchResult {
+    score: number,
+    positions: Uint32Array
+  }
+
+  export interface FuzzyMatchHighlights {
+    score: number
+    highlights: AnsiHighlight[]
+  }
+
+  /**
+  * An array representing a fuzzy match.
+  *
+  * 0. the score
+  * 1. the offset at which matching started
+  * 2. `<match_pos_N>`
+  * 3. `<match_pos_1>`
+  * 4. `<match_pos_0>` etc
+  */
+  export type FuzzyScore = [score: number, wordStart: number, ...matches: number[]]
+
+  export interface FuzzyScoreOptions {
+    readonly boostFullMatch: boolean
+    /**
+     * Allows first match to be a weak match
+     */
+    readonly firstMatchCanBeWeak: boolean
+  }
+
+  /**
+   * Match kinds could be:
+   *
+   * - 'aggressive' with fixed match for permutations.
+   * - 'any' fast match with first 13 characters only.
+   * - 'normal' nothing special.
+   */
+  export type FuzzyKind = 'normal' | 'aggressive' | 'any'
+
+  export type ScoreFunction = (word: string, wordPos?: number) => FuzzyScore | undefined
+
+  export interface FuzzyMatch {
+
+    /**
+     * Create 0 index byte spans from matched text and FuzzyScore.
+     * Mostly used for create {@link HighlightItem highlight items}.
+     *
+     * @param {string} text The matched text for count bytes.
+     * @param {FuzzyScore} score
+     * @returns {Iterable<[number, number]>}
+     */
+    matchScoreSpans(text: string, score: FuzzyScore): Iterable<[number, number]>
+
+    /**
+     *
+     * Create a score function
+     *
+     * @param {string} pattern The pattern to match.
+     * @param {number} patternPos Start character index of pattern.
+     * @param {FuzzyScoreOptions} options Optional option.
+     * @param {FuzzyKind} kind Use 'normal' when undefined.
+     * @returns {ScoreFunction}
+     */
+    createScoreFunction(pattern: string, patternPos: number, options?: FuzzyScoreOptions, kind?: FuzzyKind): ScoreFunction
+
+    /**
+     * Initialize match by set the match pattern and matchSeq.
+     *
+     * @param {string} pattern The match pattern Limited length to 256.
+     * @param {boolean} matchSeq Match the sequence characters instead of split pattern by white spaces.
+     * @returns {void}
+     */
+    setPattern(pattern: string, matchSeq?: boolean): void
+    /**
+     * Get the match result of text including score and character index
+     * positions, return undefined when no match found.
+     *
+     * @param {string} text Content to match
+     * @returns {FuzzyMatchResult | undefined}
+     */
+    match(text: string): FuzzyMatchResult | undefined
+    /**
+     * Match character positions to column spans.
+     * Better than matchHighlights method by reduce iteration.
+     *
+     * @param {string} text Context to match
+     * @param {ArrayLike<number>} positions Matched character index positions.
+     * @param {number} max Maximum column number to calculate
+     * @returns {Iterable<[number, number]>}
+     */
+    matchSpans(text: string, positions: ArrayLike<number>, max?: number): Iterable<[number, number]>
+    /**
+     * Get the match highlights result, including score and highlight items.
+     * Return undefined when no match found.
+     *
+     * @param {string} text Content to match
+     * @returns {FuzzyMatchHighlights | undefined}
+     */
+    matchHighlights(text: string, hlGroup: string): FuzzyMatchHighlights | undefined
+  }
+
+  export interface TextDocumentMatch {
+    readonly uri: string
+    readonly languageId: string
   }
 
   export namespace workspace {
@@ -6339,35 +8741,29 @@ declare module 'coc.nvim' {
      */
     export const isNvim: boolean
     /**
-     * Is true when current mode is insert, could be wrong when user cancel insert by <C-c>
-     *
-     * @deprecated
-     */
-    export const insertMode: boolean
-    /**
      * All filetypes of loaded documents.
      */
     export const filetypes: ReadonlySet<string>
+    /**
+     * All languageIds of loaded documents.
+     */
+    export const languageIds: ReadonlySet<string>
     /**
      * Root directory of coc.nvim
      */
     export const pluginRoot: string
     /**
-     * Current `&completeopt` of vim, may not correct.
-     */
-    export const completeOpt: string
-    /**
      * Exists channel names.
      */
     export const channelNames: ReadonlyArray<string>
     /**
-     * Current document array.
+     * Loaded documents that attached.
      */
     export const documents: ReadonlyArray<Document>
     /**
      * Current document array.
      */
-    export const textDocuments: ReadonlyArray<TextDocument>
+    export const textDocuments: ReadonlyArray<LinesTextDocument>
     /**
      * Current workspace folders.
      */
@@ -6378,18 +8774,16 @@ declare module 'coc.nvim' {
     export const folderPaths: ReadonlyArray<string>
     /**
      * Current workspace folder, could be null when vim started from user's home.
+     *
+     * @deprecated
      */
     export const workspaceFolder: WorkspaceFolder | null
-    /**
-     * Event fired after terminal created, only fired with Terminal that created
-     * by `workspace.createTerminal`
-     */
-    export const onDidOpenTerminal: Event<Terminal>
-    /**
-     * Event fired on terminal close, only fired with Terminal that created by
-     * `workspace.createTerminal`
-     */
-    export const onDidCloseTerminal: Event<Terminal>
+    export const onDidCreateFiles: Event<FileCreateEvent>
+    export const onDidRenameFiles: Event<FileRenameEvent>
+    export const onDidDeleteFiles: Event<FileDeleteEvent>
+    export const onWillCreateFiles: Event<FileWillCreateEvent>
+    export const onWillRenameFiles: Event<FileWillRenameEvent>
+    export const onWillDeleteFiles: Event<FileWillDeleteEvent>
     /**
      * Event fired on workspace folder change.
      */
@@ -6397,11 +8791,11 @@ declare module 'coc.nvim' {
     /**
      * Event fired after document create.
      */
-    export const onDidOpenTextDocument: Event<TextDocument & { bufnr: number }>
+    export const onDidOpenTextDocument: Event<LinesTextDocument & { bufnr: number }>
     /**
      * Event fired after document unload.
      */
-    export const onDidCloseTextDocument: Event<TextDocument & { bufnr: number }>
+    export const onDidCloseTextDocument: Event<LinesTextDocument & { bufnr: number }>
     /**
      * Event fired on document change.
      */
@@ -6413,7 +8807,7 @@ declare module 'coc.nvim' {
     /**
      * Event fired after document save.
      */
-    export const onDidSaveTextDocument: Event<TextDocument>
+    export const onDidSaveTextDocument: Event<LinesTextDocument>
 
     /**
      * Event fired on configuration change. Configuration change could by many
@@ -6431,9 +8825,57 @@ declare module 'coc.nvim' {
     export const onDidRuntimePathChange: Event<ReadonlyArray<string>>
 
     /**
-     * Create new namespace id by name.
+     * Returns a path that is relative to the workspace folder or folders.
+     *
+     * When there are no {@link workspace.workspaceFolders workspace folders} or when the path
+     * is not contained in them, the input is returned.
+     *
+     * @param pathOrUri A path or uri. When a uri is given its {@link Uri.fsPath fsPath} is used.
+     * @param includeWorkspaceFolder When `true` and when the given path is contained inside a
+     * workspace folder the name of the workspace is prepended. Defaults to `true` when there are
+     * multiple workspace folders and `false` otherwise.
+     * @return A path relative to the root or the input.
      */
-    export function createNameSpace(name: string): number
+    export function asRelativePath(pathOrUri: string | Uri, includeWorkspaceFolder?: boolean): string
+
+    /**
+     * Opens a document. Will return early if this document is already open. Otherwise
+     * the document is loaded and the {@link workspace.onDidOpenTextDocument didOpen}-event fires.
+     *
+     * The document is denoted by an {@link Uri}. Depending on the {@link Uri.scheme scheme} the
+     * following rules apply:
+     * * `file`-scheme: Open a file on disk (`openTextDocument(Uri.file(path))`). Will be rejected if the file
+     * does not exist or cannot be loaded.
+     * * `untitled`-scheme: Open a blank untitled file with associated path (`openTextDocument(Uri.file(path).with({ scheme: 'untitled' }))`).
+     * The language will be derived from the file name.
+     * * For all other schemes contributed {@link TextDocumentContentProvider text document content providers} and
+     * {@link FileSystemProvider file system providers} are consulted.
+     *
+     * *Note* that the lifecycle of the returned document is owned by the editor and not by the extension. That means an
+     * {@linkcode workspace.onDidCloseTextDocument onDidClose}-event can occur at any time after opening it.
+     *
+     * @param uri Identifies the resource to open.
+     * @return A promise that resolves to a {@link Document document}.
+     */
+    export function openTextDocument(uri: Uri): Thenable<Document>
+
+    /**
+     * A short-hand for `openTextDocument(Uri.file(fileName))`.
+     *
+     * @see {@link openTextDocument}
+     * @param fileName A name of a file on disk.
+     * @return A promise that resolves to a {@link Document document}.
+     */
+    export function openTextDocument(fileName: string): Thenable<Document>
+
+    /**
+     * Get display cell count of text on vim.
+     * Control character below 0x80 are considered as 1.
+     *
+     * @param text Text to display.
+     * @return The cells count.
+     */
+    export function getDisplayWidth(text: string, cache?: boolean): number
 
     /**
      * Like vim's has(), but for version check only.
@@ -6466,7 +8908,7 @@ declare module 'coc.nvim' {
     /**
      * Check if selector match document.
      */
-    export function match(selector: DocumentSelector, document: TextDocument): number
+    export function match(selector: DocumentSelector, document: TextDocumentMatch): number
 
     /**
      * Findup from filename or filenames from current filepath or root.
@@ -6476,15 +8918,6 @@ declare module 'coc.nvim' {
     export function findUp(filename: string | string[]): Promise<string | null>
 
     /**
-     * Resolve root folder of uri with match patterns.
-     * Cwd is returned when uri is not file scheme.
-     * Parent folder of uri is returned when failed to resolve.
-     *
-     * @deprecated avoid use it when possible.
-     */
-    export function resolveRootFolder(uri: Uri, patterns: string[]): Promise<string>
-
-    /**
      * Get possible watchman binary path.
      */
     export function getWatchmanPath(): string | null
@@ -6492,12 +8925,16 @@ declare module 'coc.nvim' {
     /**
      * Get configuration by section and optional resource uri.
      */
-    export function getConfiguration(section?: string, resource?: string): WorkspaceConfiguration
+    export function getConfiguration(section?: string, scope?: ConfigurationScope): WorkspaceConfiguration
 
+    /**
+     * Resolve internal json schema, uri should starts with `vscode://`
+     */
+    export function resolveJSONSchema(uri: string): any
     /**
      * Get created document by uri or bufnr.
      */
-    export function getDocument(uri: number | string): Document
+    export function getDocument(uri: number | string): Document | null | undefined
 
     /**
      * Apply WorkspaceEdit.
@@ -6510,14 +8947,9 @@ declare module 'coc.nvim' {
     export function getQuickfixItem(loc: Location | LocationLink, text?: string, type?: string, module?: string): Promise<QuickfixItem>
 
     /**
-     * Get selected range for current document
+     * Convert locations to quickfix list.
      */
-    export function getSelectedRange(visualmode: string, document: Document): Promise<Range | null>
-
-    /**
-     * Visual select range of current document
-     */
-    export function selectRange(range: Range): Promise<void>
+    export function getQuickfixList(locations: Location[]): Promise<ReadonlyArray<QuickfixItem>>
 
     /**
      * Populate locations to UI.
@@ -6532,10 +8964,10 @@ declare module 'coc.nvim' {
     /**
      * Get WorkspaceFolder of uri
      */
-    export function getWorkspaceFolder(uri: string): WorkspaceFolder | null
+    export function getWorkspaceFolder(uri: string | Uri): WorkspaceFolder | undefined
 
     /**
-     * Get content from buffer of file by uri.
+     * Get content from buffer or file by uri.
      */
     export function readFile(uri: string): Promise<string>
 
@@ -6552,7 +8984,7 @@ declare module 'coc.nvim' {
     /**
      * Jump to location.
      */
-    export function jumpTo(uri: string, position?: Position | null, openCommand?: string): Promise<void>
+    export function jumpTo(uri: string | Uri, position?: Position | null, openCommand?: string): Promise<void>
 
     /**
      * Create a file in vim and disk
@@ -6610,26 +9042,48 @@ declare module 'coc.nvim' {
     export function registerTextDocumentContentProvider(scheme: string, provider: TextDocumentContentProvider): Disposable
 
     /**
-     * Register unique keymap uses `<Plug>(coc-{key})` as lhs
-     * Throw error when {key} already exists.
+     * Register unique global key-mapping with `<Plug>(coc-{key})` as lhs.
+     * 'noremap' is always used, Throw error when {key} already exists.
      *
      * @param {MapMode[]} modes - array of 'n' | 'i' | 'v' | 'x' | 's' | 'o'
-     * @param {string} key - unique name
-     * @param {Function} fn - callback function
-     * @param {Partial} opts
+     * @param {string} key - unique name, should only use alphabetical characters and '-'.
+     * @param {Function} fn - callback function.
+     * @param {Partial} opts - Optional option.
      * @returns {Disposable}
      */
     export function registerKeymap(modes: MapMode[], key: string, fn: () => ProviderResult<any>, opts?: Partial<KeymapOption>): Disposable
 
     /**
-     * Register expr key-mapping.
+     * Register expr mapping global or local to buffer.
+     *
+     * Unlike :map, space in {lhs} is accepted as part of the {lhs}, keycodes
+     * are replaced are usual.
+     * 'noremap' and map arguments <silent>, <nowait> are always used.
+     *
+     * @param {MapMode} mode - Mode short-name.
+     * @param {string} rhs - rhs of key-mapping.
+     * @param {Function} fn - callback function.
+     * @param {number | boolean} buffer - Buffer number or current buffer by use `true`, default to false.
+     * @param {boolean} cancel - Cancel pupop menu before invoke callback, insert mode only, define to true.
+     * @returns {Disposable}
      */
-    export function registerExprKeymap(mode: 'i' | 'n' | 'v' | 's' | 'x', key: string, fn: () => ProviderResult<string>, buffer?: boolean): Disposable
+    export function registerExprKeymap(mode: MapMode, rhs: string, fn: () => ProviderResult<string>, buffer?: number | boolean, cancel?: boolean): Disposable
 
     /**
-     * Register local key-mapping.
+     * Register local keymap with callback.
+     *
+     * Unlike :map, space in {lhs} is accepted as part of the {lhs}, keycodes
+     * are replaced are usual.
+     * 'noremap' and map arguments <silent>, <nowait> are always used.
+     *
+     * @param {number} bufnr - buffer number, use 0 for current buffer.
+     * @param {'n' | 'i' | 'v' | 's' | 'x'} mode - mode short-name.
+     * @param {string} lhs - lhs of key-mapping.
+     * @param {Function} fn - callback function.
+     * @param {boolean} notify - send notification instead of request from vim when inovke callback, default to `false`.
+     * @returns {Disposable}
      */
-    export function registerLocalKeymap(mode: 'n' | 'v' | 's' | 'x', key: string, fn: () => ProviderResult<any>, notify?: boolean): Disposable
+    export function registerLocalKeymap(bufnr: number, mode: 'n' | 'i' | 'v' | 's' | 'x', lhs: string, fn: () => ProviderResult<any>, notify?: boolean): Disposable
 
     /**
      * Register for buffer sync objects, created item should be disposable
@@ -6643,10 +9097,44 @@ declare module 'coc.nvim' {
     export function registerBufferSync<T extends BufferSyncItem>(create: (doc: Document) => T | undefined): BufferSync<T>
 
     /**
-     * Create a FileSystemWatcher instance, when watchman not exists, the
-     * returned FileSystemWatcher can stil be used, but not work at all.
+     * Create a FuzzyMatch instance using wasm module.
+     * The FuzzyMatch does the same match algorithm as vim's `:h matchfuzzypos()`
      */
-    export function createFileSystemWatcher(globPattern: string, ignoreCreate?: boolean, ignoreChange?: boolean, ignoreDelete?: boolean): FileSystemWatcher
+    export function createFuzzyMatch(): FuzzyMatch
+
+    /**
+     * Compute word ranges of opened document in specified range.
+     *
+     * @param {string | number} uri Uri of resource
+     * @param {Range} range Range of resource
+     * @param {CancellationToken} token
+     * @returns {Promise<{ [word: string]: Range[] } | null>}
+     */
+    export function computeWordRanges(uri: string | number, range: Range, token?: CancellationToken): Promise<{ [word: string]: Range[] } | null>
+    /**
+     * Create a FileSystemWatcher instance, when watchman doesn't exist, the
+     * returned FileSystemWatcher can still be used, but not work at all.
+     */
+    export function createFileSystemWatcher(globPattern: GlobPattern, ignoreCreate?: boolean, ignoreChange?: boolean, ignoreDelete?: boolean): FileSystemWatcher
+    /**
+     * Find files across all {@link workspace.workspaceFolders workspace folders} in the workspace.
+     *
+     * @example
+     * findFiles('**​/*.js', '**​/node_modules/**', 10)
+     *
+     * @param include A {@link GlobPattern glob pattern} that defines the files to search for. The glob pattern
+     * will be matched against the file paths of resulting matches relative to their workspace.
+     * Use a {@link RelativePattern relative pattern} to restrict the search results to a {@link WorkspaceFolder workspace folder}.
+     * @param exclude  A {@link GlobPattern glob pattern} that defines files and folders to exclude. The glob pattern
+     * will be matched against the file paths of resulting matches relative to their workspace. When `undefined` or`null`,
+     * no excludes will apply.
+     * @param maxResults An upper-bound for the result.
+     * @param token A token that can be used to signal cancellation to the underlying search engine.
+     * @return A thenable that resolves to an array of resource identifiers. Will return no results if no
+     * {@link workspace.workspaceFolders workspace folders} are opened.
+     */
+    export function findFiles(include: GlobPattern, exclude?: GlobPattern | null, maxResults?: number, token?: CancellationToken): Thenable<Uri[]>
+
     /**
      * Create persistence Mru instance.
      */
@@ -6660,11 +9148,6 @@ declare module 'coc.nvim' {
     export function createTask(id: string): Task
 
     /**
-     * Create terminal in (neo)vim.
-     */
-    export function createTerminal(opts: TerminalOptions): Promise<Terminal>
-
-    /**
      * Create DB instance at extension root.
      */
     export function createDatabase(name: string): JsonDB
@@ -6672,6 +9155,121 @@ declare module 'coc.nvim' {
   // }}
 
   // window module {{
+  /**
+  * Represents how a terminal exited.
+  */
+  export interface TerminalExitStatus {
+    /**
+      * The exit code that a terminal exited with, it can have the following values:
+      * - Zero: the terminal process or custom execution succeeded.
+      * - Non-zero: the terminal process or custom execution failed.
+      * - `undefined`: the user forcibly closed the terminal or a custom execution exited
+      *   without providing an exit code.
+      */
+    readonly code: number | undefined
+  }
+
+  export interface TerminalOptions {
+    /**
+     * A human-readable string which will be used to represent the terminal in the UI.
+     */
+    name?: string
+
+    /**
+     * A path to a custom shell executable to be used in the terminal.
+     */
+    shellPath?: string
+
+    /**
+     * Args for the custom shell executable, this does not work on Windows (see #8429)
+     */
+    shellArgs?: string[]
+
+    /**
+     * A path or URI for the current working directory to be used for the terminal.
+     */
+    cwd?: string
+
+    /**
+     * Object with environment variables that will be added to the VS Code process.
+     */
+    env?: { [key: string]: string | null }
+
+    /**
+     * Whether the terminal process environment should be exactly as provided in
+     * `TerminalOptions.env`. When this is false (default), the environment will be based on the
+     * window's environment and also apply configured platform settings like
+     * `terminal.integrated.windows.env` on top. When this is true, the complete environment
+     * must be provided as nothing will be inherited from the process or any configuration.
+     * Neovim only.
+     */
+    strictEnv?: boolean
+  }
+
+  /**
+   * An individual terminal instance within the integrated terminal.
+   */
+  export interface Terminal {
+
+    /**
+     * The bufnr of terminal buffer.
+     */
+    readonly bufnr: number
+
+    /**
+     * The name of the terminal.
+     */
+    readonly name: string
+
+    /**
+     * The process ID of the shell process.
+     */
+    readonly processId: Promise<number>
+
+    /**
+     * The exit status of the terminal, this will be undefined while the terminal is active.
+     *
+     * **Example:** Show a notification with the exit code when the terminal exits with a
+     * non-zero exit code.
+     * ```typescript
+     * window.onDidCloseTerminal(t => {
+     *   if (t.exitStatus && t.exitStatus.code) {
+     *   	vscode.window.showInformationMessage(`Exit code: ${t.exitStatus.code}`);
+     *   }
+     * });
+     * ```
+     */
+    readonly exitStatus: TerminalExitStatus | undefined
+
+    /**
+     * Send text to the terminal. The text is written to the stdin of the underlying pty process
+     * (shell) of the terminal.
+     *
+     * @param text The text to send.
+     * @param addNewLine Whether to add a new line to the text being sent, this is normally
+     * required to run a command in the terminal. The character(s) added are \n or \r\n
+     * depending on the platform. This defaults to `true`.
+     */
+    sendText(text: string, addNewLine?: boolean): void
+
+    /**
+     * Show the terminal panel and reveal this terminal in the UI, return false when failed.
+     *
+     * @param preserveFocus When `true` the terminal will not take focus.
+     */
+    show(preserveFocus?: boolean): Promise<boolean>
+
+    /**
+     * Hide the terminal panel if this terminal is currently showing.
+     */
+    hide(): void
+
+    /**
+     * Dispose and free associated resources.
+     */
+    dispose(): void
+  }
+
   /**
    * Option for create status item.
    */
@@ -6806,6 +9404,10 @@ declare module 'coc.nvim' {
      */
     highlight?: string
     /**
+     * highlight items of content.
+     */
+    highlights?: ReadonlyArray<HighlightItem>
+    /**
      * highlight groups for border, default to `"dialog.borderhighlight"` or 'CocFlating'
      */
     borderhighlight?: string
@@ -6819,11 +9421,46 @@ declare module 'coc.nvim' {
     callback?: (index: number) => void
   }
 
-  export interface NotificationConfig extends DialogConfig {
+  export type NotificationKind = 'error' | 'info' | 'warning' | 'progress'
+
+  export interface NotificationConfig {
+    kind?: NotificationKind
+
+    content?: string
     /**
-     * Timeout in milliseconds to dismiss notification, default no timeout.
+     * Optional title text.
      */
-    timeout?: number
+    title?: string
+    /**
+     * Buttons as bottom of dialog.
+     */
+    buttons?: DialogButton[]
+    /**
+     * index is -1 for window close without button click
+     */
+    callback?: (index: number) => void
+  }
+
+  /**
+   * Options to configure the behavior of the quick pick UI.
+   */
+  export interface QuickPickOptions {
+    /**
+     * An optional string that represents the title of the quick pick.
+     */
+    title?: string
+    /**
+     * Placeholder text that shown when input value is empty.
+     */
+    placeholder?: string
+    /**
+     * An optional flag to include the description when filtering the picks.
+     */
+    matchOnDescription?: boolean
+    /**
+     * An optional flag to make the picker accept multiple selections, if true the result is an array of picks.
+     */
+    canPickMany?: boolean
   }
 
   /**
@@ -6845,6 +9482,114 @@ declare module 'coc.nvim' {
     picked?: boolean
   }
 
+  export interface QuickPickConfig<T extends QuickPickItem> {
+    /**
+     * An optional title.
+     */
+    title?: string
+    /**
+     * Placeholder text that shown when input value is empty.
+     */
+    placeholder?: string
+    /**
+     * Items to pick from.
+     */
+    items: readonly T[]
+    /**
+     * Initial value of the filter text.
+     */
+    value?: string
+    /**
+     * If multiple items can be selected at the same time. Defaults to false.
+     */
+    canSelectMany?: boolean
+    /**
+     * If the filter text should also be matched against the description of the items. Defaults to false.
+     */
+    matchOnDescription: boolean
+  }
+
+  export interface QuickPick<T extends QuickPickItem> {
+    /**
+     * Set or get current input value.
+     */
+    value: string
+    /**
+     * An optional title.
+     */
+    title: string | undefined
+    /**
+     * An optional placeholder text.
+     */
+    placeholder: string | undefined
+    /**
+     * If the UI should show a progress indicator. Defaults to false.
+     *
+     * Change this to true, e.g., while loading more data or validating
+     * user input.
+     */
+    loading: boolean
+    /**
+     * Items to pick from. This can be read and updated by the extension.
+     */
+    items: readonly T[]
+    /**
+     * Active items. This can be read and updated by the extension.
+     */
+    activeItems: readonly T[]
+    /**
+     * If the filter text should also be matched against the description of the items. Defaults to false.
+     */
+    matchOnDescription: boolean
+    /**
+      * If multiple items can be selected at the same time. Defaults to false.
+      */
+    canSelectMany: boolean
+    /**
+     * Max height of list, ``
+     */
+    maxHeight: number
+    /**
+     * Width of window, limited by `dialog.maxWidth` configuration and vim's 'columns'.
+     * Undefined by default, which means the width is dynamically calculated.
+     */
+    width: number | undefined
+    /**
+     * Represents the input prompt box field of the quickpick element
+    **/
+    readonly inputBox: InputBox | undefined
+    /**
+     * The current selection index, can be used to act on an item with onDidFinish, even
+     * if the item is not selected. The index corresponds to the .items or .activeItems
+     * arrays, and can be used to index into them
+    **/
+    readonly currIndex: number
+    /**
+     * The buffer for the popup element of the quick pick containing the .items to be selected
+    **/
+    readonly buffer: number
+    /**
+     * The window for the popup element of the quick pick containing the .items to be selected
+    **/
+    readonly winid: number | undefined
+    /**
+     * An event signaling when QuickPick closed, fired with selected items or null when canceled.
+     */
+    readonly onDidFinish: Event<T[] | null>
+    /**
+     * An event signaling when the value of the filter text has changed.
+     */
+    readonly onDidChangeValue: Event<string>
+    /**
+     * An event signaling when the selected items have changed.
+     */
+    readonly onDidChangeSelection: Event<readonly T[]>
+    /**
+     * Makes the input UI visible in its current configuration.
+     */
+    show(): Promise<void>
+  }
+
   export interface ScreenPosition {
     row: number
     col: number
@@ -6862,9 +9607,13 @@ declare module 'coc.nvim' {
      */
     autoclose?: boolean
     /**
-     * Keep foucus current window, default to false,
+     * Keep focus current window, default to false.
      */
     keepfocus?: boolean
+    /**
+     * Position of terminal window, default to 'right'.
+     */
+    position?: 'bottom' | 'right'
   }
 
   /**
@@ -6937,10 +9686,256 @@ declare module 'coc.nvim' {
     dispose: () => void
   }
 
+  export type HighlightItemDef = [string, number, number, number, number?, number?, number?]
+
+  export interface HighlightDiff {
+    remove: number[]
+    removeMarkers: number[]
+    add: HighlightItemDef[]
+  }
+
+  export interface MenuItem {
+    text: string
+    disabled?: boolean | { reason: string }
+  }
+
+  export interface MenuOption {
+    /**
+     * Title in menu window.
+     */
+    title?: string,
+    /**
+     * Content in menu window as normal text.
+     */
+    content?: string
+    /**
+     * Create and highlight shortcut characters.
+     */
+    shortcuts?: boolean
+    /**
+     * Position of menu, default to 'cursor'
+     */
+    position?: 'center' | 'cursor'
+  }
+
+  export interface InputOptions {
+    /**
+     * Placeholder text that shown when input value is empty.
+     */
+    placeholder?: string
+    /**
+     * Position to show input, default to 'cursor'
+     */
+    position?: 'cursor' | 'center'
+    /**
+     * Margin top editor when position is 'center'
+     */
+    marginTop?: number
+    /**
+     * Border highlight of float window/popup, configuration `dialog.borderhighlight` used as default.
+     */
+    borderhighlight?: string
+    /**
+     * Create key-mappings for quickpick list.
+     */
+    list?: boolean
+  }
+
+  export interface InputPreference extends InputOptions {
+    /**
+     * Top, right, bottom, left border existence, default to [1,1,1,1]
+     */
+    border?: [0 | 1, 0 | 1, 0 | 1, 0 | 1]
+    /**
+     * Rounded border, default to true, configuration `dialog.rounded` used as default.
+     */
+    rounded?: boolean
+    /**
+     * Minimal window width, `g:coc_prompt_win_width` or 32 used as default.
+     */
+    minWidth?: number
+    /**
+     * Maximum window width, configuration `dialog.maxWidth` used as default.
+     */
+    maxWidth?: number
+  }
+
+  export interface InputDimension {
+    readonly width: number
+    readonly height: number
+    /**
+     * 0 based screen row
+     */
+    readonly row: number
+    /**
+     * O based screen col
+     */
+    readonly col: number
+  }
+
+  export interface InputBox {
+    /**
+     * Current input text, could be changed.
+     */
+    value: string
+    /**
+     * Change or get title of input box.
+     */
+    title: string
+    /**
+     * Change or get loading state of input box.
+     */
+    loading: boolean
+    /**
+     * Change or get borderhighlight of input box.
+     */
+    borderhighlight: string
+    /**
+     * Dimension of float window/popup
+     */
+    readonly dimension: InputDimension
+    /**
+     * Buffer number of float window/popup
+     */
+    readonly bufnr: number
+    /**
+     * An event signaling when the value has changed.
+     */
+    readonly onDidChange: Event<string>
+    /**
+     * An event signaling input finished, emit input value or null when canceled.
+     */
+    readonly onDidFinish: Event<string | null>
+  }
+
+  /**
+   * FloatWinConfig.
+   */
+  export interface FloatWinConfig {
+    border?: boolean | [number, number, number, number]
+    rounded?: boolean
+    highlight?: string
+    title?: string
+    borderhighlight?: string
+    close?: boolean
+    maxHeight?: number
+    maxWidth?: number
+    winblend?: number
+    focusable?: boolean
+    shadow?: boolean
+    preferTop?: boolean
+    autoHide?: boolean
+    offsetX?: number
+    cursorline?: boolean
+    modes?: string[]
+    excludeImages?: boolean
+    position?: "fixed" | "auto"
+    top?: number
+    bottom?: number
+    left?: number
+    right?: number
+  }
+
+  export interface FloatFactory {
+    /**
+     * Show documentations in float window/popup.
+     * Window and buffer are reused when possible.
+     *
+     * @param docs List of documentations.
+     * @param options Configuration for floating window/popup.
+     */
+    show: (docs: Documentation[], options?: FloatWinConfig) => Promise<void>
+    /**
+     * Close the float window created by this float factory.
+     */
+    close: () => void
+    /**
+     * Check if float window is shown.
+     */
+    activated: () => Promise<boolean>
+    /**
+     * Unbind events
+     */
+    dispose: () => void
+  }
+
   export namespace window {
+    /**
+     * The currently active editor or `undefined`. The active editor is the one
+     * that currently has focus or, when none has focus, the one that has changed
+     * input most recently.
+     */
+    export const activeTextEditor: TextEditor | undefined
+
+    /**
+     * The currently visible editors or an empty array.
+     */
+    export const visibleTextEditors: readonly TextEditor[]
+
+    /**
+     * An {@link Event} which fires when the {@link window.activeTextEditor active editor}
+     * has changed. *Note* that the event also fires when the active editor changes
+     * to `undefined`.
+     */
+    export const onDidChangeActiveTextEditor: Event<TextEditor | undefined>
+
+    /**
+     * An {@link Event} which fires when the array of {@link window.visibleTextEditors visible editors}
+     * has changed.
+     */
+    export const onDidChangeVisibleTextEditors: Event<readonly TextEditor[]>
+
+    /**
+     * The currently opened terminals or an empty array.
+     * onDidChangeTerminalState doesn't exist since we can't detect window resize on vim.
+     */
+    export const terminals: readonly Terminal[]
+
+    /**
+     * Event fired after terminal created, only fired with Terminal that
+     * created by `window.createTerminal`
+     */
+    export const onDidOpenTerminal: Event<Terminal>
+
+    /**
+     * Event fired on terminal close, only fired with Terminal that created by
+     * `window.createTerminal`
+     */
+    export const onDidCloseTerminal: Event<Terminal>
+
+    /**
+     * Creates a {@link Terminal} with a backing shell process.
+     * The terminal is created by (neo)vim.
+     *
+     * @param options A TerminalOptions object describing the characteristics of the new terminal.
+     * @return A new Terminal.
+     * @throws When running in an environment where a new process cannot be started.
+     */
+    export function createTerminal(opts: TerminalOptions): Promise<Terminal>
+
+    /**
+     * Create float window factory for create float window/popup around current
+     * cursor.
+     * Configuration "floatFactory.floatConfig" is used as default float config.
+     * Configuration "coc.preferences.excludeImageLinksInMarkdownDocument" is also used.
+     *
+     * Float windows are automatic reused and hidden on specific events including:
+     *  - BufEnter
+     *  - InsertEnter
+     *  - InsertLeave
+     *  - MenuPopupChanged
+     *  - CursorMoved
+     *  - CursorMovedI
+     *
+     * @param conf Configuration of float window.
+     * @return FloatFactory
+     */
+    export function createFloatFactory(conf: FloatWinConfig): FloatFactory
+
     /**
      * Reveal message with message type.
      *
+     * @deprecated Use `window.showErrorMessage`, `window.showWarningMessage` and `window.showInformationMessage` instead.
      * @param msg Message text to show.
      * @param messageType Type of message, could be `error` `warning` and `more`, default to `more`
      */
@@ -6965,28 +9960,64 @@ declare module 'coc.nvim' {
 
     /**
      * Show quickpick for single item, use `window.menuPick` for menu at current current position.
+     * Use `window.showPickerDialog()` for multiple selection.
      *
      * @param items Label list.
      * @param placeholder Prompt text, default to 'choose by number'.
      * @returns Index of selected item, or -1 when canceled.
+     * @deprecated use `window.showQuickPick()` instead.
      */
     export function showQuickpick(items: string[], placeholder?: string): Promise<number>
 
     /**
-     * Show menu picker at current cursor position, |inputlist()| is used as fallback.
-     * Use `workspace.env.dialog` to check if the picker window/popup could work.
+     * Shows a selection list allowing multiple selections.
      *
-     * @param items Array of texts.
+     * @param items An array of strings, or a promise that resolves to an array of strings.
+     * @param options Configures the behavior of the selection list.
+     * @param token A token that can be used to signal cancellation.
+     * @return A promise that resolves to the selected items or `undefined`.
+     */
+    export function showQuickPick(items: readonly string[] | Thenable<readonly string[]>, options: QuickPickOptions & { canPickMany: true }, token?: CancellationToken): Thenable<string[] | undefined>
+
+    /**
+     * Shows a selection list.
+     *
+     * @param items An array of strings, or a promise that resolves to an array of strings.
+     * @param options Configures the behavior of the selection list.
+     * @param token A token that can be used to signal cancellation.
+     * @return A promise that resolves to the selection or `undefined`.
+     */
+    export function showQuickPick(items: readonly string[] | Thenable<readonly string[]>, options?: QuickPickOptions, token?: CancellationToken): Thenable<string | undefined>
+
+    /**
+     * Shows a selection list allowing multiple selections.
+     *
+     * @param items An array of items, or a promise that resolves to an array of items.
+     * @param options Configures the behavior of the selection list.
+     * @param token A token that can be used to signal cancellation.
+     * @return A promise that resolves to the selected items or `undefined`.
+     */
+    export function showQuickPick<T extends QuickPickItem>(items: readonly T[] | Thenable<readonly T[]>, options: QuickPickOptions & { canPickMany: true }, token?: CancellationToken): Thenable<T[] | undefined>
+
+    /**
+     * Shows a selection list.
+     *
+     * @param items An array of items, or a promise that resolves to an array of items.
+     * @param options Configures the behavior of the selection list.
+     * @param token A token that can be used to signal cancellation.
+     * @return A promise that resolves to the selected item or `undefined`.
+     */
+    export function showQuickPick<T extends QuickPickItem>(items: readonly T[] | Thenable<readonly T[]>, options?: QuickPickOptions, token?: CancellationToken): Thenable<T | undefined>
+
+    /**
+     * Show menu picker at current cursor position, |inputlist()| is used as fallback.
+     *
+     * @param items Array of texts or menu items.
      * @param title Optional title of float/popup window.
      * @param token A token that can be used to signal cancellation.
      * @returns Selected index (0 based), -1 when canceled.
      */
-    export function showMenuPicker(items: string[], title?: string, token?: CancellationToken): Promise<number>
-
-    /**
-     * Open local config file
-     */
-    export function openLocalConfig(): Promise<void>
+    export function showMenuPicker(items: string[] | MenuItem[], option?: MenuOption | string, token?: CancellationToken): Promise<number>
 
     /**
      * Prompt user for confirm, a float/popup window would be used when possible,
@@ -7000,7 +10031,6 @@ declare module 'coc.nvim' {
     /**
      * Show dialog window at the center of screen.
      * Note that the dialog would always be closed after button click.
-     * Use `workspace.env.dialog` to check if dialog could work.
      *
      * @param config Dialog configuration.
      * @returns Dialog or null when dialog can't work.
@@ -7008,12 +10038,35 @@ declare module 'coc.nvim' {
     export function showDialog(config: DialogConfig): Promise<Dialog | null>
 
     /**
-     * Request input from user
+     * Request input from user, `input()` is used when `window.env.dialog` not true.
      *
      * @param title Title text of prompt window.
      * @param defaultValue Default value of input, empty text by default.
+     * @param {InputOptions} option for input window, other preferences are read from user configuration.
      */
-    export function requestInput(title: string, defaultValue?: string): Promise<string>
+    export function requestInput(title: string, defaultValue?: string, option?: InputOptions): Promise<string>
+
+    /**
+     * Creates and show a {@link InputBox} to let the user enter some text input.
+     *
+     * @return A new {@link InputBox}.
+     */
+    export function createInputBox(title: string, defaultValue?: string, option?: InputPreference): Promise<InputBox>
+
+    /**
+     * Creates and show a {@link QuickPick} to let the user pick an item or items from a
+     * list of items of type T.
+     *
+     * Note that in many cases the more convenient {@link window.showQuickPick}
+     * is easier to use. {@link window.createQuickPick} should be used
+     * when {@link window.showQuickPick} does not offer the required flexibility.
+     *
+     * Note that unlike VSCode, promise is returned for wait other inputs finished.
+     *
+     * @param config @deprecated config of quickpick, use properties of QuickPick instance instead.
+     * @return A new {@link QuickPick}.
+     */
+    export function createQuickPick<T extends QuickPickItem>(config?: QuickPickConfig<T>): Promise<QuickPick<T>>
 
     /**
      * Create statusbar item that would be included in `g:coc_status`.
@@ -7023,6 +10076,11 @@ declare module 'coc.nvim' {
      * @return A new status bar item.
      */
     export function createStatusBarItem(priority?: number, option?: StatusItemOption): StatusBarItem
+
+    /**
+     * Open local config file
+     */
+    export function openLocalConfig(): Promise<void>
 
     /**
      * Create a new output channel
@@ -7035,7 +10093,7 @@ declare module 'coc.nvim' {
     /**
      * Create a {@link TreeView} instance, call `show()` method to render.
      *
-     * @param viewId Id of the view, used as title of TreeView when title not exists.
+     * @param viewId Id of the view, used as title of TreeView when title doesn't exist.
      * @param options Options for creating the {@link TreeView}
      * @returns a {@link TreeView}.
      */
@@ -7089,7 +10147,6 @@ declare module 'coc.nvim' {
 
     /**
      * Show multiple picker at center of screen.
-     * Use `workspace.env.dialog` to check if dialog could work.
      *
      * @param items A set of items that will be rendered as actions in the message.
      * @param title Title of picker dialog.
@@ -7100,7 +10157,6 @@ declare module 'coc.nvim' {
 
     /**
      * Show multiple picker at center of screen.
-     * Use `workspace.env.dialog` to check if dialog could work.
      *
      * @param items A set of items that will be rendered as actions in the message.
      * @param title Title of picker dialog.
@@ -7167,9 +10223,9 @@ declare module 'coc.nvim' {
     export function showErrorMessage<T extends MessageItem>(message: string, ...items: T[]): Promise<T | undefined>
 
     /**
-     * Show notification window at right of screen.
+     * Show notification window at bottom right of screen.
      */
-    export function showNotification(config: NotificationConfig): Promise<boolean>
+    export function showNotification(config: NotificationConfig): Promise<void>
 
     /**
      * Show progress in the editor. Progress is shown while running the given callback
@@ -7190,13 +10246,49 @@ declare module 'coc.nvim' {
       message?: string
       increment?: number
     }>, token: CancellationToken) => Thenable<R>): Promise<R>
+
+    /**
+     * Get selected range for current document
+     */
+    export function getSelectedRange(visualmode: string): Promise<Range | null>
+
+    /**
+     * Visual select range of current document
+     */
+    export function selectRange(range: Range): Promise<void>
+
+    /**
+     * Get diff between new highlight items and current highlights requested from vim
+     *
+     * @param {number} bufnr - Buffer number
+     * @param {string} ns - Highlight namespace
+     * @param {HighlightItem[]} items - Highlight items
+     * @param {[number, number] | undefined} region - 0 based start line and end line (end exclusive)
+     * @param {CancellationToken} token - CancellationToken
+     * @returns {Promise<HighlightDiff>}
+     */
+    export function diffHighlights(bufnr: number, ns: string, items: ExtendedHighlightItem[], region?: [number, number] | undefined, token?: CancellationToken): Promise<HighlightDiff | null>
+
+    /**
+     * Apply highlight diffs, normally used with `window.diffHighlights`
+     *
+     * Timer is used to add highlights when there're too many highlight items to add,
+     * the highlight process won't be finished on that case.
+     *
+     * @param {number} bufnr - Buffer name
+     * @param {string} ns - Namespace
+     * @param {number} priority
+     * @param {HighlightDiff} diff
+     * @param {boolean} notify - Use notification, default false.
+     * @returns {Promise<void>}
+     */
+    export function applyDiffHighlights(bufnr: number, ns: string, priority: number, diff: HighlightDiff, notify?: boolean): Promise<void>
   }
   // }}
 
   // extensions module {{
   export interface Logger {
     readonly category: string
-    readonly level: string
     log(...args: any[]): void
     trace(message: any, ...args: any[]): void
     debug(message: any, ...args: any[]): void
@@ -7342,7 +10434,7 @@ declare module 'coc.nvim' {
 
     /**
      * The absolute directory path for extension to download persist data.
-     * The directory could be not exists.
+     * The directory might not exist.
      */
     storagePath: string
 
@@ -7361,10 +10453,6 @@ declare module 'coc.nvim' {
     logger: Logger
   }
 
-  export type ExtensionApi = {
-    [index: string]: any
-  } | void | null | undefined
-
   export interface PropertyScheme {
     type: string
     default: any
@@ -7378,12 +10466,12 @@ declare module 'coc.nvim' {
     /**
      * Fired on extension loaded, extension not activated yet.
      */
-    export const onDidLoadExtension: Event<Extension<ExtensionApi>>
+    export const onDidLoadExtension: Event<Extension<any>>
 
     /**
      * Fired on extension activated.
      */
-    export const onDidActiveExtension: Event<Extension<ExtensionApi>>
+    export const onDidActiveExtension: Event<Extension<any>>
 
     /**
      * Fired with extension id on extension unload.
@@ -7393,7 +10481,15 @@ declare module 'coc.nvim' {
     /**
      * Get all loaded extensions, without disabled extensions, extension may not activated.
      */
-    export const all: ReadonlyArray<Extension<ExtensionApi>>
+    export const all: ReadonlyArray<Extension<any>>
+
+    /**
+      * Get an extension by its full identifier in the form of: `publisher.name`.
+      *
+      * @param extensionId An extension identifier.
+      * @return An extension or `undefined`.
+      */
+    export function getExtensionById<T = any>(extensionId: string): Extension<T> | undefined
 
     /**
      * Get state of specific extension.
@@ -7409,11 +10505,6 @@ declare module 'coc.nvim' {
      * Check if extension is activated.
      */
     export function isActivated(id: string): boolean
-
-    /**
-     * Dynamic add custom json schemes without using package.json.
-     */
-    export function addSchemeProperty(key: string, def: PropertyScheme): void
   }
   // }}
 
@@ -7440,6 +10531,7 @@ declare module 'coc.nvim' {
 
   export interface ListItem {
     label: string
+    preselect?: boolean
     filterText?: string
     /**
      * A string that should be used when comparing this item
@@ -7452,23 +10544,13 @@ declare module 'coc.nvim' {
     resolved?: boolean
   }
 
-  export interface ListHighlights {
-    /**
-     * Byte indexes list, 0 based.
-     */
-    spans: [number, number][]
-    /**
-     * `list.matchHighlightGroup` is used when not exists.
-     */
-    hlGroup?: string
-  }
-
   export type ListMode = 'normal' | 'insert'
 
   export type ListMatcher = 'strict' | 'fuzzy' | 'regex'
 
   export interface ListOptions {
     position: string
+    reverse: boolean
     input: string
     ignorecase: boolean
     interactive: boolean
@@ -7531,12 +10613,16 @@ declare module 'coc.nvim' {
      */
     multiple?: boolean
     /**
+     * Tab positioned list should be persisted (no window switch) on action invoke.
+     */
+    tabPersist?: boolean
+    /**
      * Item is array of selected items when multiple is true.
      */
     execute: (item: ListItem | ListItem[], context: ListContext) => ProviderResult<void>
   }
 
-  export interface MutipleListAction extends ListAction {
+  export interface MultipleListAction extends Omit<ListAction, 'execute'> {
     multiple: true
     execute: (item: ListItem[], context: ListContext) => ProviderResult<void>
   }
@@ -7597,7 +10683,7 @@ declare module 'coc.nvim' {
      */
     doHighlight?(): void
     /**
-     * Called on list unregisted.
+     * Called on list unregistered.
      */
     dispose?(): void
   }
@@ -7605,7 +10691,7 @@ declare module 'coc.nvim' {
   export interface PreviewOptions {
     bufname?: string
     lines: string[]
-    filetype: string
+    filetype?: string
     lnum?: number
     range?: Range
     /**
@@ -7630,9 +10716,15 @@ declare module 'coc.nvim' {
   export interface SnippetSession {
     isActive: boolean
   }
-  export interface TextmateSnippet {
-    toString(): string
+
+  export interface UltiSnippetOption {
+    regex?: string
+    context?: string
+    noPython?: boolean
+    range?: Range
+    line?: string
   }
+
   /**
    * A snippet string is a template which allows to insert text
    * and to control the editor cursor when insertion happens.
@@ -7718,18 +10810,18 @@ declare module 'coc.nvim' {
      */
     export function getSession(bufnr: number): SnippetSession | undefined
     /**
-     * Parse snippet string to TextmateSnippet.
+     * Resolve snippet string to text.
      */
-    export function resolveSnippet(body: string): Promise<TextmateSnippet>
+    export function resolveSnippet(body: string, ultisnip?: UltiSnippetOption): Promise<string>
     /**
      * Insert snippet at current buffer.
      *
      * @param {string} snippet Textmate snippet string.
      * @param {boolean} select Not select first placeholder when false, default `true`.
-     * @param {Range} range Repalce range, insert to current cursor position when undefined.
+     * @param {Range} range Replace range, insert to current cursor position when undefined.
      * @returns {Promise<boolean>} true when insert success.
      */
-    export function insertSnippet(snippet: string | SnippetString, select?: boolean, range?: Range): Promise<boolean>
+    export function insertSnippet(snippet: string | SnippetString, select?: boolean, range?: Range, ultisnip?: UltiSnippetOption | boolean): Promise<boolean>
 
     /**
      * Jump to next placeholder, only works when snippet session activated.
@@ -7746,7 +10838,7 @@ declare module 'coc.nvim' {
     /**
      * Check if snippet activated for bufnr.
      */
-    export function isActived(bufnr: number): boolean
+    export function isActivated(bufnr: number): boolean
   }
   // }}
 
@@ -7877,9 +10969,9 @@ declare module 'coc.nvim' {
      */
     export function getDiagnosticsInRange(doc: TextDocumentIdentifier, range: Range): ReadonlyArray<Diagnostic>
     /**
-     * All diagnostics of current workspace
+     * Get all sorted diagnostics
      */
-    export function getDiagnosticList(): ReadonlyArray<DiagnosticItem>
+    export function getDiagnosticList(): Promise<ReadonlyArray<DiagnosticItem>>
 
     /**
      * All diagnostics at current cursor position.
@@ -7894,6 +10986,114 @@ declare module 'coc.nvim' {
   // }}
 
   // language client {{
+
+  export type ProgressToken = number | string
+
+  export interface WorkDoneProgressBegin {
+    kind: 'begin'
+    /**
+     * Mandatory title of the progress operation. Used to briefly inform about
+     * the kind of operation being performed.
+     *
+     * Examples: "Indexing" or "Linking dependencies".
+     */
+    title: string
+    /**
+     * Controls if a cancel button should show to allow the user to cancel the
+     * long running operation. Clients that don't support cancellation are allowed
+     * to ignore the setting.
+     */
+    cancellable?: boolean
+    /**
+     * Optional, more detailed associated progress message. Contains
+     * complementary information to the `title`.
+     *
+     * Examples: "3/25 files", "project/src/module2", "node_modules/some_dep".
+     * If unset, the previous progress message (if any) is still valid.
+     */
+    message?: string
+    /**
+     * Optional progress percentage to display (value 100 is considered 100%).
+     * If not provided infinite progress is assumed and clients are allowed
+     * to ignore the `percentage` value in subsequent in report notifications.
+     *
+     * The value should be steadily rising. Clients are free to ignore values
+     * that are not following this rule.
+     */
+    percentage?: number
+  }
+
+  export interface WorkDoneProgressReport {
+    kind: 'report'
+    /**
+     * Controls enablement state of a cancel button. This property is only valid if a cancel
+     * button got requested in the `WorkDoneProgressStart` payload.
+     *
+     * Clients that don't support cancellation or don't support control the button's
+     * enablement state are allowed to ignore the setting.
+     */
+    cancellable?: boolean
+    /**
+     * Optional, more detailed associated progress message. Contains
+     * complementary information to the `title`.
+     *
+     * Examples: "3/25 files", "project/src/module2", "node_modules/some_dep".
+     * If unset, the previous progress message (if any) is still valid.
+     */
+    message?: string
+    /**
+     * Optional progress percentage to display (value 100 is considered 100%).
+     * If not provided infinite progress is assumed and clients are allowed
+     * to ignore the `percentage` value in subsequent in report notifications.
+     *
+     * The value should be steadily rising. Clients are free to ignore values
+     * that are not following this rule.
+     */
+    percentage?: number
+  }
+
+  export interface WorkDoneProgressEnd {
+    kind: 'end'
+    /**
+     * Optional, a final message indicating to for example indicate the outcome
+     * of the operation.
+     */
+    message?: string
+  }
+
+  /**
+   * The file event type
+   */
+  export namespace FileChangeType {
+    /**
+     * The file got created.
+     */
+    const Created = 1
+    /**
+     * The file got changed.
+     */
+    const Changed = 2
+    /**
+     * The file got deleted.
+     */
+    const Deleted = 3
+  }
+
+  export type FileChangeType = 1 | 2 | 3
+
+  /**
+   * An event describing a file change.
+   */
+  export interface FileEvent {
+    /**
+     * The file's uri.
+     */
+    uri: string
+    /**
+     * The change type.
+     */
+    type: FileChangeType
+  }
   /**
    * An action to be performed when the connection is producing errors.
    */
@@ -7944,6 +11144,9 @@ declare module 'coc.nvim' {
   }
 
   export interface SynchronizeOptions {
+    /**
+     * @deprecated Use the new pull model (`workspace/configuration` request)
+     */
     configurationSection?: string | string[]
     fileEvents?: FileSystemWatcher | FileSystemWatcher[]
   }
@@ -7963,10 +11166,6 @@ declare module 'coc.nvim' {
      * The configuration section asked for.
      */
     section?: string
-  }
-  export interface ResponseError<D> {
-    code: number
-    data: D | undefined
   }
 
   export type HandlerResult<R, E> = R | ResponseError<E> | Thenable<R> | Thenable<ResponseError<E>> | Thenable<R | ResponseError<E>>
@@ -7991,13 +11190,13 @@ declare module 'coc.nvim' {
 
   export interface WorkspaceFolderWorkspaceMiddleware {
     workspaceFolders?: (token: CancellationToken, next: RequestHandler0<WorkspaceFolder[] | null, void>) => HandlerResult<WorkspaceFolder[] | null, void>
-    didChangeWorkspaceFolders?: NextSignature<WorkspaceFoldersChangeEvent, void>
+    didChangeWorkspaceFolders?: NextSignature<WorkspaceFoldersChangeEvent, Promise<void>>
   }
 
   export interface ProvideTypeDefinitionSignature {
     (
       this: void,
-      document: TextDocument,
+      document: LinesTextDocument,
       position: Position,
       token: CancellationToken
     ): ProviderResult<Definition | DefinitionLink[]>
@@ -8006,7 +11205,7 @@ declare module 'coc.nvim' {
   export interface TypeDefinitionMiddleware {
     provideTypeDefinition?: (
       this: void,
-      document: TextDocument,
+      document: LinesTextDocument,
       position: Position,
       token: CancellationToken,
       next: ProvideTypeDefinitionSignature
@@ -8014,47 +11213,47 @@ declare module 'coc.nvim' {
   }
 
   export interface ProvideImplementationSignature {
-    (this: void, document: TextDocument, position: Position, token: CancellationToken): ProviderResult<Definition | DefinitionLink[]>
+    (this: void, document: LinesTextDocument, position: Position, token: CancellationToken): ProviderResult<Definition | DefinitionLink[]>
   }
 
   export interface ImplementationMiddleware {
-    provideImplementation?: (this: void, document: TextDocument, position: Position, token: CancellationToken, next: ProvideImplementationSignature) => ProviderResult<Definition | DefinitionLink[]>
+    provideImplementation?: (this: void, document: LinesTextDocument, position: Position, token: CancellationToken, next: ProvideImplementationSignature) => ProviderResult<Definition | DefinitionLink[]>
   }
-  export type ProvideDocumentColorsSignature = (document: TextDocument, token: CancellationToken) => ProviderResult<ColorInformation[]>
+  export type ProvideDocumentColorsSignature = (document: LinesTextDocument, token: CancellationToken) => ProviderResult<ColorInformation[]>
 
   export type ProvideColorPresentationSignature = (
     color: Color,
-    context: { document: TextDocument; range: Range },
+    context: { document: LinesTextDocument; range: Range },
     token: CancellationToken
   ) => ProviderResult<ColorPresentation[]>
 
   export interface ColorProviderMiddleware {
     provideDocumentColors?: (
       this: void,
-      document: TextDocument,
+      document: LinesTextDocument,
       token: CancellationToken,
       next: ProvideDocumentColorsSignature
     ) => ProviderResult<ColorInformation[]>
     provideColorPresentations?: (
       this: void,
       color: Color,
-      context: { document: TextDocument; range: Range },
+      context: { document: LinesTextDocument; range: Range },
       token: CancellationToken,
       next: ProvideColorPresentationSignature
     ) => ProviderResult<ColorPresentation[]>
   }
 
   export interface ProvideDeclarationSignature {
-    (this: void, document: TextDocument, position: Position, token: CancellationToken): ProviderResult<Declaration | DeclarationLink[]>
+    (this: void, document: LinesTextDocument, position: Position, token: CancellationToken): ProviderResult<Declaration | DeclarationLink[]>
   }
 
   export interface DeclarationMiddleware {
-    provideDeclaration?: (this: void, document: TextDocument, position: Position, token: CancellationToken, next: ProvideDeclarationSignature) => ProviderResult<Declaration | DeclarationLink[]>
+    provideDeclaration?: (this: void, document: LinesTextDocument, position: Position, token: CancellationToken, next: ProvideDeclarationSignature) => ProviderResult<Declaration | DeclarationLink[]>
   }
 
   export type ProvideFoldingRangeSignature = (
     this: void,
-    document: TextDocument,
+    document: LinesTextDocument,
     context: FoldingContext,
     token: CancellationToken
   ) => ProviderResult<FoldingRange[]>
@@ -8062,7 +11261,7 @@ declare module 'coc.nvim' {
   export interface FoldingRangeProviderMiddleware {
     provideFoldingRanges?: (
       this: void,
-      document: TextDocument,
+      document: LinesTextDocument,
       context: FoldingContext,
       token: CancellationToken,
       next: ProvideFoldingRangeSignature
@@ -8070,7 +11269,7 @@ declare module 'coc.nvim' {
   }
 
   export interface PrepareCallHierarchySignature {
-    (this: void, document: TextDocument, position: Position, token: CancellationToken): ProviderResult<CallHierarchyItem | CallHierarchyItem[]>
+    (this: void, document: LinesTextDocument, position: Position, token: CancellationToken): ProviderResult<CallHierarchyItem | CallHierarchyItem[]>
   }
 
   export interface CallHierarchyIncomingCallsSignature {
@@ -8083,7 +11282,7 @@ declare module 'coc.nvim' {
   export interface CallHierarchyMiddleware {
     prepareCallHierarchy?: (
       this: void,
-      document: TextDocument,
+      document: LinesTextDocument,
       positions: Position,
       token: CancellationToken,
       next: PrepareCallHierarchySignature
@@ -8103,48 +11302,57 @@ declare module 'coc.nvim' {
   }
 
   export interface DocumentSemanticsTokensSignature {
-    (this: void, document: TextDocument, token: CancellationToken): ProviderResult<SemanticTokens>
+    (this: void, document: LinesTextDocument, token: CancellationToken): ProviderResult<SemanticTokens>
   }
 
   export interface DocumentSemanticsTokensEditsSignature {
-    (this: void, document: TextDocument, previousResultId: string, token: CancellationToken): ProviderResult<SemanticTokens | SemanticTokensDelta>
+    (this: void, document: LinesTextDocument, previousResultId: string, token: CancellationToken): ProviderResult<SemanticTokens | SemanticTokensDelta>
   }
 
   export interface DocumentRangeSemanticTokensSignature {
-    (this: void, document: TextDocument, range: Range, token: CancellationToken): ProviderResult<SemanticTokens>
+    (this: void, document: LinesTextDocument, range: Range, token: CancellationToken): ProviderResult<SemanticTokens>
   }
 
   export interface SemanticTokensMiddleware {
     provideDocumentSemanticTokens?: (
       this: void,
-      document: TextDocument,
+      document: LinesTextDocument,
       token: CancellationToken,
       next: DocumentSemanticsTokensSignature
     ) => ProviderResult<SemanticTokens>
     provideDocumentSemanticTokensEdits?: (
       this: void,
-      document: TextDocument,
+      document: LinesTextDocument,
       previousResultId: string,
       token: CancellationToken,
       next: DocumentSemanticsTokensEditsSignature
     ) => ProviderResult<SemanticTokens | SemanticTokensDelta>
     provideDocumentRangeSemanticTokens?: (
       this: void,
-      document: TextDocument,
+      document: LinesTextDocument,
       range: Range,
       token: CancellationToken,
       next: DocumentRangeSemanticTokensSignature
     ) => ProviderResult<SemanticTokens>
   }
 
+  export interface FileOperationsMiddleware {
+    didCreateFiles?: NextSignature<FileCreateEvent, Promise<void>>
+    willCreateFiles?: NextSignature<FileWillCreateEvent, Thenable<WorkspaceEdit | null | undefined>>
+    didRenameFiles?: NextSignature<FileRenameEvent, Promise<void>>
+    willRenameFiles?: NextSignature<FileWillRenameEvent, Thenable<WorkspaceEdit | null | undefined>>
+    didDeleteFiles?: NextSignature<FileDeleteEvent, Promise<void>>
+    willDeleteFiles?: NextSignature<FileWillDeleteEvent, Thenable<WorkspaceEdit | null | undefined>>
+  }
+
   export interface ProvideLinkedEditingRangeSignature {
-    (this: void, document: TextDocument, position: Position, token: CancellationToken): ProviderResult<LinkedEditingRanges>
+    (this: void, document: LinesTextDocument, position: Position, token: CancellationToken): ProviderResult<LinkedEditingRanges>
   }
 
   export interface LinkedEditingRangeMiddleware {
     provideLinkedEditingRange?: (
       this: void,
-      document: TextDocument,
+      document: LinesTextDocument,
       position: Position,
       token: CancellationToken,
       next: ProvideLinkedEditingRangeSignature
@@ -8152,11 +11360,20 @@ declare module 'coc.nvim' {
   }
 
   export interface ProvideSelectionRangeSignature {
-    (this: void, document: TextDocument, positions: Position[], token: CancellationToken): ProviderResult<SelectionRange[]>
+    (this: void, document: LinesTextDocument, positions: Position[], token: CancellationToken): ProviderResult<SelectionRange[]>
   }
 
   export interface SelectionRangeProviderMiddleware {
-    provideSelectionRanges?: (this: void, document: TextDocument, positions: Position[], token: CancellationToken, next: ProvideSelectionRangeSignature) => ProviderResult<SelectionRange[]>
+    provideSelectionRanges?: (this: void, document: LinesTextDocument, positions: Position[], token: CancellationToken, next: ProvideSelectionRangeSignature) => ProviderResult<SelectionRange[]>
+  }
+
+  export type ProvideDiagnosticSignature = (this: void, document: TextDocument, previousResultId: string | undefined, token: CancellationToken) => ProviderResult<DocumentDiagnosticReport>
+
+  export type ProvideWorkspaceDiagnosticSignature = (this: void, resultIds: PreviousResultId[], token: CancellationToken, resultReporter: ResultReporter) => ProviderResult<WorkspaceDiagnosticReport>
+
+  export interface DiagnosticProviderMiddleware {
+    provideDiagnostics?: (this: void, document: TextDocument, previousResultId: string | undefined, token: CancellationToken, next: ProvideDiagnosticSignature) => ProviderResult<DocumentDiagnosticReport>
+    provideWorkspaceDiagnostics?: (this: void, resultIds: PreviousResultId[], token: CancellationToken, resultReporter: ResultReporter, next: ProvideWorkspaceDiagnosticSignature) => ProviderResult<WorkspaceDiagnosticReport>
   }
 
   export interface HandleWorkDoneProgressSignature {
@@ -8168,7 +11385,7 @@ declare module 'coc.nvim' {
   }
 
   export interface ProvideCompletionItemsSignature {
-    (this: void, document: TextDocument, position: Position, context: CompletionContext, token: CancellationToken): ProviderResult<CompletionItem[] | CompletionList>
+    (this: void, document: LinesTextDocument, position: Position, context: CompletionContext, token: CancellationToken): ProviderResult<CompletionItem[] | CompletionList | null>
   }
 
   export interface ResolveCompletionItemSignature {
@@ -8176,37 +11393,37 @@ declare module 'coc.nvim' {
   }
 
   export interface ProvideHoverSignature {
-    (this: void, document: TextDocument, position: Position, token: CancellationToken): ProviderResult<Hover>
+    (this: void, document: LinesTextDocument, position: Position, token: CancellationToken): ProviderResult<Hover>
   }
 
   export interface ProvideSignatureHelpSignature {
-    (this: void, document: TextDocument, position: Position, context: SignatureHelpContext, token: CancellationToken): ProviderResult<SignatureHelp>
+    (this: void, document: LinesTextDocument, position: Position, context: SignatureHelpContext, token: CancellationToken): ProviderResult<SignatureHelp>
   }
 
   export interface ProvideDefinitionSignature {
-    (this: void, document: TextDocument, position: Position, token: CancellationToken): ProviderResult<Definition | DefinitionLink[]>
+    (this: void, document: LinesTextDocument, position: Position, token: CancellationToken): ProviderResult<Definition | DefinitionLink[]>
   }
 
   export interface ProvideReferencesSignature {
-    (this: void, document: TextDocument, position: Position, options: {
+    (this: void, document: LinesTextDocument, position: Position, options: {
       includeDeclaration: boolean
     }, token: CancellationToken): ProviderResult<Location[]>
   }
 
   export interface ProvideDocumentHighlightsSignature {
-    (this: void, document: TextDocument, position: Position, token: CancellationToken): ProviderResult<DocumentHighlight[]>
+    (this: void, document: LinesTextDocument, position: Position, token: CancellationToken): ProviderResult<DocumentHighlight[]>
   }
 
   export interface ProvideDocumentSymbolsSignature {
-    (this: void, document: TextDocument, token: CancellationToken): ProviderResult<SymbolInformation[] | DocumentSymbol[]>
+    (this: void, document: LinesTextDocument, token: CancellationToken): ProviderResult<SymbolInformation[] | DocumentSymbol[]>
   }
 
   export interface ProvideWorkspaceSymbolsSignature {
-    (this: void, query: string, token: CancellationToken): ProviderResult<SymbolInformation[]>
+    (this: void, query: string, token: CancellationToken): ProviderResult<WorkspaceSymbol[]>
   }
 
   export interface ProvideCodeActionsSignature {
-    (this: void, document: TextDocument, range: Range, context: CodeActionContext, token: CancellationToken): ProviderResult<(Command | CodeAction)[]>
+    (this: void, document: LinesTextDocument, range: Range, context: CodeActionContext, token: CancellationToken): ProviderResult<(Command | CodeAction)[]>
   }
 
   export interface ResolveCodeActionSignature {
@@ -8214,7 +11431,7 @@ declare module 'coc.nvim' {
   }
 
   export interface ProvideCodeLensesSignature {
-    (this: void, document: TextDocument, token: CancellationToken): ProviderResult<CodeLens[]>
+    (this: void, document: LinesTextDocument, token: CancellationToken): ProviderResult<CodeLens[]>
   }
 
   export interface ResolveCodeLensSignature {
@@ -8222,30 +11439,30 @@ declare module 'coc.nvim' {
   }
 
   export interface ProvideDocumentFormattingEditsSignature {
-    (this: void, document: TextDocument, options: FormattingOptions, token: CancellationToken): ProviderResult<TextEdit[]>
+    (this: void, document: LinesTextDocument, options: FormattingOptions, token: CancellationToken): ProviderResult<TextEdit[]>
   }
 
   export interface ProvideDocumentRangeFormattingEditsSignature {
-    (this: void, document: TextDocument, range: Range, options: FormattingOptions, token: CancellationToken): ProviderResult<TextEdit[]>
+    (this: void, document: LinesTextDocument, range: Range, options: FormattingOptions, token: CancellationToken): ProviderResult<TextEdit[]>
   }
 
   export interface ProvideOnTypeFormattingEditsSignature {
-    (this: void, document: TextDocument, position: Position, ch: string, options: FormattingOptions, token: CancellationToken): ProviderResult<TextEdit[]>
+    (this: void, document: LinesTextDocument, position: Position, ch: string, options: FormattingOptions, token: CancellationToken): ProviderResult<TextEdit[]>
   }
 
   export interface PrepareRenameSignature {
-    (this: void, document: TextDocument, position: Position, token: CancellationToken): ProviderResult<Range | {
+    (this: void, document: LinesTextDocument, position: Position, token: CancellationToken): ProviderResult<Range | {
       range: Range
       placeholder: string
     }>
   }
 
   export interface ProvideRenameEditsSignature {
-    (this: void, document: TextDocument, position: Position, newName: string, token: CancellationToken): ProviderResult<WorkspaceEdit>
+    (this: void, document: LinesTextDocument, position: Position, newName: string, token: CancellationToken): ProviderResult<WorkspaceEdit>
   }
 
   export interface ProvideDocumentLinksSignature {
-    (this: void, document: TextDocument, token: CancellationToken): ProviderResult<DocumentLink[]>
+    (this: void, document: LinesTextDocument, token: CancellationToken): ProviderResult<DocumentLink[]>
   }
 
   export interface ResolveDocumentLinkSignature {
@@ -8269,11 +11486,11 @@ declare module 'coc.nvim' {
   }
 
   export interface _WorkspaceMiddleware {
-    didChangeConfiguration?: (this: void, sections: string[] | undefined, next: DidChangeConfigurationSignature) => void
+    didChangeConfiguration?: (this: void, sections: string[] | undefined, next: DidChangeConfigurationSignature) => Promise<void>
     didChangeWatchedFile?: (this: void, event: FileEvent, next: DidChangeWatchedFileSignature) => void
   }
 
-  export type WorkspaceMiddleware = _WorkspaceMiddleware & ConfigurationWorkspaceMiddleware & WorkspaceFolderWorkspaceMiddleware
+  export type WorkspaceMiddleware = _WorkspaceMiddleware & ConfigurationWorkspaceMiddleware & WorkspaceFolderWorkspaceMiddleware & FileOperationsMiddleware
 
   /**
    * Params to show a document.
@@ -8328,61 +11545,92 @@ declare module 'coc.nvim' {
   export type WindowMiddleware = _WindowMiddleware
 
   /**
-   * The Middleware lets extensions intercept the request and notications send and received
+   * The Middleware lets extensions intercept the request and notifications send and received
    * from the server
    */
   interface _Middleware {
-    didOpen?: NextSignature<TextDocument, void>
-    didChange?: NextSignature<DidChangeTextDocumentParams, void>
-    willSave?: NextSignature<TextDocumentWillSaveEvent, void>
+    didOpen?: NextSignature<LinesTextDocument, Promise<void>>
+    didChange?: NextSignature<DidChangeTextDocumentParams, Promise<void>>
+    willSave?: NextSignature<TextDocumentWillSaveEvent, Promise<void>>
     willSaveWaitUntil?: NextSignature<TextDocumentWillSaveEvent, Thenable<TextEdit[]>>
-    didSave?: NextSignature<TextDocument, void>
-    didClose?: NextSignature<TextDocument, void>
+    didSave?: NextSignature<LinesTextDocument, Promise<void>>
+    didClose?: NextSignature<LinesTextDocument, Promise<void>>
     handleDiagnostics?: (this: void, uri: string, diagnostics: Diagnostic[], next: HandleDiagnosticsSignature) => void
-    provideCompletionItem?: (this: void, document: TextDocument, position: Position, context: CompletionContext, token: CancellationToken, next: ProvideCompletionItemsSignature) => ProviderResult<CompletionItem[] | CompletionList>
+    provideCompletionItem?: (this: void, document: LinesTextDocument, position: Position, context: CompletionContext, token: CancellationToken, next: ProvideCompletionItemsSignature) => ProviderResult<CompletionItem[] | CompletionList | null>
     resolveCompletionItem?: (this: void, item: CompletionItem, token: CancellationToken, next: ResolveCompletionItemSignature) => ProviderResult<CompletionItem>
-    provideHover?: (this: void, document: TextDocument, position: Position, token: CancellationToken, next: ProvideHoverSignature) => ProviderResult<Hover>
-    provideSignatureHelp?: (this: void, document: TextDocument, position: Position, context: SignatureHelpContext, token: CancellationToken, next: ProvideSignatureHelpSignature) => ProviderResult<SignatureHelp>
-    provideDefinition?: (this: void, document: TextDocument, position: Position, token: CancellationToken, next: ProvideDefinitionSignature) => ProviderResult<Definition | DefinitionLink[]>
-    provideReferences?: (this: void, document: TextDocument, position: Position, options: {
+    provideHover?: (this: void, document: LinesTextDocument, position: Position, token: CancellationToken, next: ProvideHoverSignature) => ProviderResult<Hover>
+    provideSignatureHelp?: (this: void, document: LinesTextDocument, position: Position, context: SignatureHelpContext, token: CancellationToken, next: ProvideSignatureHelpSignature) => ProviderResult<SignatureHelp>
+    provideDefinition?: (this: void, document: LinesTextDocument, position: Position, token: CancellationToken, next: ProvideDefinitionSignature) => ProviderResult<Definition | DefinitionLink[]>
+    provideReferences?: (this: void, document: LinesTextDocument, position: Position, options: {
       includeDeclaration: boolean
     }, token: CancellationToken, next: ProvideReferencesSignature) => ProviderResult<Location[]>
-    provideDocumentHighlights?: (this: void, document: TextDocument, position: Position, token: CancellationToken, next: ProvideDocumentHighlightsSignature) => ProviderResult<DocumentHighlight[]>
-    provideDocumentSymbols?: (this: void, document: TextDocument, token: CancellationToken, next: ProvideDocumentSymbolsSignature) => ProviderResult<SymbolInformation[] | DocumentSymbol[]>
-    provideWorkspaceSymbols?: (this: void, query: string, token: CancellationToken, next: ProvideWorkspaceSymbolsSignature) => ProviderResult<SymbolInformation[]>
-    provideCodeActions?: (this: void, document: TextDocument, range: Range, context: CodeActionContext, token: CancellationToken, next: ProvideCodeActionsSignature) => ProviderResult<(Command | CodeAction)[]>
+    provideDocumentHighlights?: (this: void, document: LinesTextDocument, position: Position, token: CancellationToken, next: ProvideDocumentHighlightsSignature) => ProviderResult<DocumentHighlight[]>
+    provideDocumentSymbols?: (this: void, document: LinesTextDocument, token: CancellationToken, next: ProvideDocumentSymbolsSignature) => ProviderResult<SymbolInformation[] | DocumentSymbol[]>
+    provideWorkspaceSymbols?: (this: void, query: string, token: CancellationToken, next: ProvideWorkspaceSymbolsSignature) => ProviderResult<WorkspaceSymbol[]>
+    provideCodeActions?: (this: void, document: LinesTextDocument, range: Range, context: CodeActionContext, token: CancellationToken, next: ProvideCodeActionsSignature) => ProviderResult<(Command | CodeAction)[]>
     handleWorkDoneProgress?: (this: void, token: ProgressToken, params: WorkDoneProgressBegin | WorkDoneProgressReport | WorkDoneProgressEnd, next: HandleWorkDoneProgressSignature) => void
     resolveCodeAction?: (this: void, item: CodeAction, token: CancellationToken, next: ResolveCodeActionSignature) => ProviderResult<CodeAction>
-    provideCodeLenses?: (this: void, document: TextDocument, token: CancellationToken, next: ProvideCodeLensesSignature) => ProviderResult<CodeLens[]>
+    provideCodeLenses?: (this: void, document: LinesTextDocument, token: CancellationToken, next: ProvideCodeLensesSignature) => ProviderResult<CodeLens[]>
     resolveCodeLens?: (this: void, codeLens: CodeLens, token: CancellationToken, next: ResolveCodeLensSignature) => ProviderResult<CodeLens>
-    provideDocumentFormattingEdits?: (this: void, document: TextDocument, options: FormattingOptions, token: CancellationToken, next: ProvideDocumentFormattingEditsSignature) => ProviderResult<TextEdit[]>
-    provideDocumentRangeFormattingEdits?: (this: void, document: TextDocument, range: Range, options: FormattingOptions, token: CancellationToken, next: ProvideDocumentRangeFormattingEditsSignature) => ProviderResult<TextEdit[]>
-    provideOnTypeFormattingEdits?: (this: void, document: TextDocument, position: Position, ch: string, options: FormattingOptions, token: CancellationToken, next: ProvideOnTypeFormattingEditsSignature) => ProviderResult<TextEdit[]>
-    prepareRename?: (this: void, document: TextDocument, position: Position, token: CancellationToken, next: PrepareRenameSignature) => ProviderResult<Range | {
+    provideDocumentFormattingEdits?: (this: void, document: LinesTextDocument, options: FormattingOptions, token: CancellationToken, next: ProvideDocumentFormattingEditsSignature) => ProviderResult<TextEdit[]>
+    provideDocumentRangeFormattingEdits?: (this: void, document: LinesTextDocument, range: Range, options: FormattingOptions, token: CancellationToken, next: ProvideDocumentRangeFormattingEditsSignature) => ProviderResult<TextEdit[]>
+    provideOnTypeFormattingEdits?: (this: void, document: LinesTextDocument, position: Position, ch: string, options: FormattingOptions, token: CancellationToken, next: ProvideOnTypeFormattingEditsSignature) => ProviderResult<TextEdit[]>
+    prepareRename?: (this: void, document: LinesTextDocument, position: Position, token: CancellationToken, next: PrepareRenameSignature) => ProviderResult<Range | {
       range: Range
       placeholder: string
     }>
-    provideRenameEdits?: (this: void, document: TextDocument, position: Position, newName: string, token: CancellationToken, next: ProvideRenameEditsSignature) => ProviderResult<WorkspaceEdit>
-    provideDocumentLinks?: (this: void, document: TextDocument, token: CancellationToken, next: ProvideDocumentLinksSignature) => ProviderResult<DocumentLink[]>
+    provideRenameEdits?: (this: void, document: LinesTextDocument, position: Position, newName: string, token: CancellationToken, next: ProvideRenameEditsSignature) => ProviderResult<WorkspaceEdit>
+    provideDocumentLinks?: (this: void, document: LinesTextDocument, token: CancellationToken, next: ProvideDocumentLinksSignature) => ProviderResult<DocumentLink[]>
     resolveDocumentLink?: (this: void, link: DocumentLink, token: CancellationToken, next: ResolveDocumentLinkSignature) => ProviderResult<DocumentLink>
     executeCommand?: (this: void, command: string, args: any[], next: ExecuteCommandSignature) => ProviderResult<any>
     workspace?: WorkspaceMiddleware
     window?: WindowMiddleware
   }
-  export type Middleware = _Middleware & TypeDefinitionMiddleware & ImplementationMiddleware & ColorProviderMiddleware & DeclarationMiddleware & FoldingRangeProviderMiddleware & CallHierarchyMiddleware & SemanticTokensMiddleware & LinkedEditingRangeMiddleware & SelectionRangeProviderMiddleware
+  export type Middleware = _Middleware & TypeDefinitionMiddleware & ImplementationMiddleware & ColorProviderMiddleware & DeclarationMiddleware & FoldingRangeProviderMiddleware & CallHierarchyMiddleware & SemanticTokensMiddleware & LinkedEditingRangeMiddleware & SelectionRangeProviderMiddleware & DiagnosticProviderMiddleware
 
   export interface ConnectionOptions {
-    // cancellationStrategy: CancellationStrategy
     maxRestartCount?: number
+  }
+
+  export interface DiagnosticPullOptions {
+    /**
+     * Whether to pull for diagnostics on document change.
+     * Default to "pullDiagnostic.onChange" configuration.
+     */
+    onChange?: boolean
+
+    /**
+     * Whether to pull for diagnostics on document save.
+     * Default to "pullDiagnostic.onSave" configuration.
+     */
+    onSave?: boolean
+
+    /**
+     * Whether to pull for workspace diagnostics when possible.
+     * Default to "pullDiagnostic.workspace" configuration.
+     */
+    workspace?: boolean
+    /**
+     * Minimatch patterns to match full filepath that should be ignored for pullDiagnostic.
+     * Default to "pullDiagnostic.ignored" configuration.
+     */
+    ignored?: string[]
+
+    /**
+     * An optional filter method that is consulted when triggering a
+     * diagnostic pull during document change or document save.
+     *
+     * @param document the document that changes or got save
+     * @param mode the mode
+     */
+    filter?(document: { uri: string, languageId: string }, mode: 'onType' | 'onSave'): boolean
   }
 
   export interface LanguageClientOptions {
     ignoredRootPaths?: string[]
-    disableWorkspaceFolders?: boolean
     disableSnippetCompletion?: boolean
     disableDynamicRegister?: boolean
-    disableDiagnostics?: boolean
-    disableCompletion?: boolean
+    disabledFeatures?: string[]
     formatterPriority?: number
     documentSelector?: DocumentSelector | string[]
     synchronize?: SynchronizeOptions
@@ -8402,8 +11650,13 @@ declare module 'coc.nvim' {
     middleware?: Middleware
     workspaceFolder?: WorkspaceFolder
     connectionOptions?: ConnectionOptions
+    diagnosticPullOptions?: DiagnosticPullOptions
     markdown?: {
-      isTrusted: boolean
+      isTrusted?: boolean
+      /**
+       * Not used
+       */
+      supportHtml?: boolean
     }
   }
   export enum State {
@@ -8427,6 +11680,55 @@ declare module 'coc.nvim' {
     id: string
     registerOptions: T
   }
+
+  export type FeatureState = {
+    kind: 'document'
+
+    /**
+     * The features's id. This is usually the method names used during
+     * registration.
+     */
+    id: string
+
+    /**
+     * Has active registrations.
+     */
+    registrations: boolean
+
+    /**
+     * A registration matches an open document.
+     */
+    matches: boolean
+
+  } | {
+    kind: 'workspace'
+
+    /**
+     * The features's id. This is usually the method names used during
+     * registration.
+     */
+    id: string
+
+    /**
+     * Has active registrations.
+     */
+    registrations: boolean
+  } | {
+    kind: 'window'
+
+    /**
+     * The features's id. This is usually the method names used during
+     * registration.
+     */
+    id: string
+
+    /**
+     * Has active registrations.
+     */
+    registrations: boolean
+  } | {
+    kind: 'static'
+  }
   /**
    * A static feature. A static feature can't be dynamically activate via the
    * server. It is wired during the initialize sequence.
@@ -8437,7 +11739,55 @@ declare module 'coc.nvim' {
      *
      * @params the initialize params.
      */
-    fillInitializeParams?: (params: any) => void
+    fillInitializeParams?: (params: object) => void
+    /**
+     * Called to fill in the client capabilities this feature implements.
+     *
+     * @param capabilities The client capabilities to fill.
+     */
+    fillClientCapabilities(capabilities: object): void
+    /**
+     * A preflight where the server capabilities are shown to all features
+     * before a feature is actually initialized. This allows feature to
+     * capture some state if they are a pre-requisite for other features.
+     *
+     * @param capabilities the server capabilities
+     * @param documentSelector the document selector pass to the client's constructor.
+     * May be `undefined` if the client was created without a selector.
+     */
+    preInitialize?: (capabilities: object, documentSelector: DocumentSelector | undefined) => void
+    /**
+     * Initialize the feature. This method is called on a feature instance
+     * when the client has successfully received the initialize request from
+     * the server and before the client sends the initialized notification
+     * to the server.
+     *
+     * @param capabilities the server capabilities
+     * @param documentSelector the document selector pass to the client's constructor.
+     *  May be `undefined` if the client was created without a selector.
+     */
+    initialize(capabilities: object, documentSelector: DocumentSelector | undefined): void
+    /**
+     * Returns the state the feature is in.
+     */
+    getState?(): FeatureState
+    /**
+     * Called when the client is stopped to dispose this feature. Usually a feature
+     * unregisters listeners registered hooked up with the VS Code extension host.
+     */
+    dispose(): void
+  }
+
+  /**
+   * A dynamic feature can be activated via the server.
+   */
+  export interface DynamicFeature<RO> {
+    /**
+     * Called to fill the initialize params.
+     *
+     * @params the initialize params.
+     */
+    fillInitializeParams?: (params: InitializeParams) => void
     /**
      * Called to fill in the client capabilities this feature implements.
      *
@@ -8450,11 +11800,42 @@ declare module 'coc.nvim' {
      * the server and before the client sends the initialized notification
      * to the server.
      *
-     * @param capabilities the server capabilities
-     * @param documentSelector the document selector pass to the client's constuctor.
+     * @param capabilities the server capabilities.
+     * @param documentSelector the document selector pass to the client's constructor.
      *  May be `undefined` if the client was created without a selector.
      */
-    initialize(capabilities: any, documentSelector: DocumentSelector | undefined): void
+    initialize(capabilities: object, documentSelector: DocumentSelector | undefined): void
+
+    /**
+     * A preflight where the server capabilities are shown to all features
+     * before a feature is actually initialized. This allows feature to
+     * capture some state if they are a pre-requisite for other features.
+     *
+     * @param capabilities the server capabilities
+     * @param documentSelector the document selector pass to the client's constructor.
+     * May be `undefined` if the client was created without a selector.
+     */
+    preInitialize?: (capabilities: object, documentSelector: DocumentSelector | undefined) => void
+    /**
+      * The signature (e.g. method) for which this features support dynamic activation / registration.
+      */
+    registrationType: RegistrationType<RO>
+    /**
+     * Is called when the server send a register request for the given message.
+     *
+     * @param data additional registration data as defined in the protocol.
+     */
+    register(data: RegistrationData<RO>): void
+    /**
+     * Is called when the server wants to unregister a feature.
+     *
+     * @param id the id used when registering the feature.
+     */
+    unregister(id: string): void
+    /**
+     * Returns the state the feature is in.
+     */
+    getState?(): FeatureState
     /**
      * Called when the client is stopped to dispose this feature. Usually a feature
      * unregisters listeners registered hooked up with the VS Code extension host.
@@ -8594,6 +11975,7 @@ declare module 'coc.nvim' {
      */
     workDoneToken?: ProgressToken
   }
+
   class RegistrationType<RO> {
     /**
      * Clients must not use this property. It is here to ensure correct typing.
@@ -8631,58 +12013,11 @@ declare module 'coc.nvim' {
     [custom: string]: any
   }
 
-  export interface DynamicFeature<RO> {
-    /**
-     * Called to fill the initialize params.
-     *
-     * @params the initialize params.
-     */
-    fillInitializeParams?: (params: InitializeParams) => void
-    /**
-     * Called to fill in the client capabilities this feature implements.
-     *
-     * @param capabilities The client capabilities to fill.
-     */
-    fillClientCapabilities(capabilities: any): void
-    /**
-     * Initialize the feature. This method is called on a feature instance
-     * when the client has successfully received the initialize request from
-     * the server and before the client sends the initialized notification
-     * to the server.
-     *
-     * @param capabilities the server capabilities.
-     * @param documentSelector the document selector pass to the client's constructor.
-     *  May be `undefined` if the client was created without a selector.
-     */
-    initialize(capabilities: any, documentSelector: DocumentSelector | undefined): void
-    /**
-      * The signature (e.g. method) for which this features support dynamic activation / registration.
-      */
-    registrationType: RegistrationType<RO>
-    /**
-     * Is called when the server send a register request for the given message.
-     *
-     * @param data additional registration data as defined in the protocol.
-     */
-    register(data: RegistrationData<RO>): void
-    /**
-     * Is called when the server wants to unregister a feature.
-     *
-     * @param id the id used when registering the feature.
-     */
-    unregister(id: string): void
-    /**
-     * Called when the client is stopped to dispose this feature. Usually a feature
-     * unregisters listeners registered hooked up with the VS Code extension host.
-     */
-    dispose(): void
-  }
-
   export interface NotificationFeature<T extends Function> {
     /**
      * Triggers the corresponding RPC method.
      */
-    getProvider(document: TextDocument): {
+    getProvider(document: { uri: string, languageId: string }): {
       send: T
     }
   }
@@ -8792,11 +12127,13 @@ declare module 'coc.nvim' {
     _$endMarker$_: number
   }
 
-  export class ProgressType<P> {
+  export class ProgressType<PR> {
     /**
-     * Clients must not use this property. It is here to ensure correct typing.
+     * Clients must not use these properties. They are here to ensure correct typing.
+     * in TypeScript
      */
-    readonly __?: [P, _EM]
+    readonly __?: [PR, _EM]
+    readonly _pr?: PR
     constructor()
   }
 
@@ -8806,9 +12143,55 @@ declare module 'coc.nvim' {
     Verbose = 2
   }
 
+  export class ProtocolRequestType0<R, PR, E, RO> extends RequestType0<R, E> implements ProgressType<PR>, RegistrationType<RO> {
+    /**
+     * Clients must not use these properties. They are here to ensure correct typing.
+     * in TypeScript
+     */
+    readonly ___: [PR, RO, _EM] | undefined
+    readonly ____: [RO, _EM] | undefined
+    readonly _pr: PR | undefined
+    constructor(method: string)
+  }
+
+  export class ProtocolRequestType<P, R, PR, E, RO> extends RequestType<P, R, E> implements ProgressType<PR>, RegistrationType<RO> {
+    /**
+     * Clients must not use this property. It is here to ensure correct typing.
+     */
+    readonly ___: [PR, RO, _EM] | undefined
+    readonly ____: [RO, _EM] | undefined
+    readonly _pr: PR | undefined
+    constructor(method: string)
+  }
+
+  export class ProtocolNotificationType0<RO> extends NotificationType0 implements RegistrationType<RO> {
+    /**
+     * Clients must not use this property. It is here to ensure correct typing.
+     */
+    readonly ___: [RO, _EM] | undefined
+    readonly ____: [RO, _EM] | undefined
+    constructor(method: string)
+  }
+  export class ProtocolNotificationType<P, RO> extends NotificationType<P> implements RegistrationType<RO> {
+    /**
+     * Clients must not use this property. It is here to ensure correct typing.
+     */
+    readonly ___: [RO, _EM] | undefined
+    readonly ____: [RO, _EM] | undefined
+    constructor(method: string)
+  }
+
+  export interface NotificationHandler0 {
+    (): void
+  }
+
+  export interface NotificationHandler<P> {
+    (params: P): void
+  }
+
   /**
    * A language server for manage a language server.
-   * It's recommended to use `services.registLanguageClient` for regist language client to serviers,
+   * It's recommended to use `services.registerLanguageClient` to register language client to serviers,
    * you can have language client listed in `CocList services` and services could start the language client
    * by `documentselector` of `clientOptions`.
    */
@@ -8817,10 +12200,13 @@ declare module 'coc.nvim' {
     readonly name: string
     constructor(id: string, name: string, serverOptions: ServerOptions, clientOptions: LanguageClientOptions, forceDebug?: boolean)
     /**
-     * Create language client by name and options, don't forget regist language client
-     * to services by `services.registLanguageClient`
+     * Create language client by name and options, don't forget to register language client
+     * to services by `services.registerLanguageClient`
      */
     constructor(name: string, serverOptions: ServerOptions, clientOptions: LanguageClientOptions, forceDebug?: boolean)
+
+    sendRequest<R, PR, E, RO>(type: ProtocolRequestType0<R, PR, E, RO>, token?: CancellationToken): Promise<R>
+    sendRequest<P, R, PR, E, RO>(type: ProtocolRequestType<P, R, PR, E, RO>, params: P, token?: CancellationToken): Promise<R>
     /**
      * R => result
      * E => Error result
@@ -8835,21 +12221,27 @@ declare module 'coc.nvim' {
     sendRequest<R>(method: string, token?: CancellationToken): Promise<R>
     sendRequest<R>(method: string, param: any, token?: CancellationToken): Promise<R>
 
+    onRequest<R, PR, E, RO>(type: ProtocolRequestType0<R, PR, E, RO>, handler: RequestHandler0<R, E>): Disposable
+    onRequest<P, R, PR, E, RO>(type: ProtocolRequestType<P, R, PR, E, RO>, handler: RequestHandler<P, R, E>): Disposable
     onRequest<R, E>(type: RequestType0<R, E>, handler: RequestHandler0<R, E>): Disposable
     onRequest<P, R, E>(type: RequestType<P, R, E>, handler: RequestHandler<P, R, E>): Disposable
     onRequest<R, E>(method: string, handler: (...params: any[]) => HandlerResult<R, E>): Disposable
 
-    sendNotification(type: NotificationType0): void
-    sendNotification<P>(type: NotificationType<P>, params?: P): void
-    sendNotification(method: string): void
-    sendNotification(method: string, params: any): void
+    sendNotification<RO>(type: ProtocolNotificationType0<RO>): Promise<void>
+    sendNotification<P, RO>(type: ProtocolNotificationType<P, RO>, params?: P): Promise<void>
+    sendNotification(type: NotificationType0): Promise<void>
+    sendNotification<P>(type: NotificationType<P>, params?: P): Promise<void>
+    sendNotification(method: string): Promise<void>
+    sendNotification(method: string, params: any): Promise<void>
 
+    onNotification<RO>(type: ProtocolNotificationType0<RO>, handler: NotificationHandler0): Disposable
+    onNotification<P, RO>(type: ProtocolNotificationType<P, RO>, handler: NotificationHandler<P>): Disposable
     onNotification(type: NotificationType0, handler: () => void): Disposable
     onNotification<P>(type: NotificationType<P>, handler: (params: P) => void): Disposable
     onNotification(method: string, handler: (...params: any[]) => void): Disposable
 
     onProgress<P>(type: ProgressType<any>, token: string | number, handler: (params: P) => void): Disposable
-    sendProgress<P>(type: ProgressType<P>, token: string | number, value: P): void
+    sendProgress<P>(type: ProgressType<P>, token: string | number, value: P): Promise<void>
 
     /**
      * Append info to outputChannel
@@ -8864,20 +12256,20 @@ declare module 'coc.nvim' {
      */
     error(message: string, data?: any): void
     getPublicState(): State
-    get initializeResult(): InitializeResult | undefined
 
-    get clientOptions(): LanguageClientOptions
+    readonly initializeResult: InitializeResult | undefined
+    readonly clientOptions: LanguageClientOptions
+    readonly outputChannel: OutputChannel
     /**
      * Fired on language server state change.
      */
-    get onDidChangeState(): Event<StateChangeEvent>
-    get outputChannel(): OutputChannel
-    get diagnostics(): DiagnosticCollection | undefined
-
+    readonly onDidChangeState: Event<StateChangeEvent>
+    readonly diagnostics: DiagnosticCollection | undefined
     /**
      * Current running state.
      */
-    get serviceState(): ServiceStat
+    readonly serviceState: ServiceStat
+    readonly started: boolean
     /**
      * Check if server could start.
      */
@@ -8887,7 +12279,6 @@ declare module 'coc.nvim' {
      */
     needsStop(): boolean
     onReady(): Promise<void>
-    get started(): boolean
     set trace(value: Trace)
 
     /**
@@ -8896,23 +12287,23 @@ declare module 'coc.nvim' {
     stop(): Promise<void>
 
     /**
-     * Start language server, not needed when registered to services by `services.registLanguageClient`
+     * Start language server, not needed when registered to services by `services.registerLanguageClient`
      */
-    start(): Disposable
+    start(): Promise<void>
     /**
      * Restart language client.
      */
     restart(): void
 
     /**
-     * Regist custom feature.
+     * Register custom feature.
      */
     registerFeature(feature: StaticFeature | DynamicFeature<any>): void
 
     /**
-     * Log failed request to outputChannel.
+     * Log failed request to outputChannel and throw error when necessary.
      */
-    handleFailedRequest<T>(type: MessageSignature, token: CancellationToken | undefined, error: any, defaultValue: T)
+    handleFailedRequest<T, P extends { kind: string }>(type: P, token: CancellationToken | undefined, error: any, defaultValue: T)
   }
 
   /**
@@ -8924,3 +12315,4 @@ declare module 'coc.nvim' {
   }
   // }}
 }
+// vim: set sw=2 ts=2 sts=2 et foldmarker={{,}} foldmethod=marker foldlevel=0 nofen:

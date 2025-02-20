@@ -1,29 +1,33 @@
+'use strict'
 import { v4 as uuid } from 'uuid'
-import { CancellationToken, Disposable, DocumentSelector, LinkedEditingRanges, Position } from 'vscode-languageserver-protocol'
-import { TextDocument } from 'vscode-languageserver-textdocument'
+import type { CancellationToken, Disposable, DocumentSelector, LinkedEditingRanges } from 'vscode-languageserver-protocol'
+import type { TextDocument } from 'vscode-languageserver-textdocument'
+import type { Position } from 'vscode-languageserver-types'
+import { createLogger } from '../logger'
 import { LinkedEditingRangeProvider } from './index'
-import Manager, { ProviderItem } from './manager'
-const logger = require('../util/logger')('linkedEditingManager')
+import Manager from './manager'
+const logger = createLogger('linkedEditingManager')
 
 export default class LinkedEditingRangeManager extends Manager<LinkedEditingRangeProvider> {
   public register(selector: DocumentSelector, provider: LinkedEditingRangeProvider): Disposable {
-    let item: ProviderItem<LinkedEditingRangeProvider> = {
+    return this.addProvider({
       id: uuid(),
       selector,
       provider
-    }
-    this.providers.add(item)
-    return Disposable.create(() => {
-      this.providers.delete(item)
     })
   }
 
+  /**
+   * Multiple providers can be registered for a language. In that case providers are sorted
+   * by their {@link workspace.match score} and the best-matching provider that has a result is used. Failure
+   * of the selected provider will cause a failure of the whole operation.
+   */
   public async provideLinkedEditingRanges(document: TextDocument, position: Position, token: CancellationToken): Promise<LinkedEditingRanges> {
-    let item = this.getProvider(document)
-    if (!item) return null
-    let { provider } = item
-    if (!provider.provideLinkedEditingRanges) return null
-
-    return await Promise.resolve(provider.provideLinkedEditingRanges(document, position, token))
+    let items = this.getProviders(document)
+    for (let item of items) {
+      let res = await Promise.resolve(item.provider.provideLinkedEditingRanges(document, position, token))
+      if (res != null) return res
+    }
+    return null
   }
 }

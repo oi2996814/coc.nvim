@@ -1,5 +1,5 @@
+import { DocumentSymbol, Range, SymbolKind } from 'vscode-languageserver-protocol'
 import { TextDocument } from 'vscode-languageserver-textdocument'
-import { DocumentSymbol, SymbolKind, Range } from 'vscode-languageserver-protocol'
 
 /**
  * A syntax parser that parse `class` and `method` only.
@@ -10,7 +10,7 @@ export default class Parser {
   private currSymbol: DocumentSymbol | undefined
   private len: number
   private textDocument: TextDocument
-  constructor(private _content: string) {
+  constructor(private _content: string, private showDetail = false) {
     this.len = _content.length
     this.textDocument = TextDocument.create('test:///a', 'txt', 1, _content)
   }
@@ -33,7 +33,7 @@ export default class Parser {
         this.currSymbol = undefined
       }
     }
-    let remain = this.getLineRemian()
+    let remain = this.getLineRemain()
     let ms = remain.match(/^(class)\s(\w+)\s\{\s*/)
     if (ms) {
       // find class
@@ -55,8 +55,8 @@ export default class Parser {
         this._symbols.push(symbolInfo)
       }
       this.currSymbol = symbolInfo
-    } else if (this.currSymbol && this.currSymbol.kind == SymbolKind.Class) {
-      let ms = remain.match(/(\w+)\(.*\)\s*\{/)
+    } else {
+      let ms = remain.match(/(\w+)\((.*)\)\s*\{/)
       if (ms) {
         // find method
         let start = this._curr
@@ -68,6 +68,7 @@ export default class Parser {
           range,
           selectionRange,
           kind: SymbolKind.Method,
+          detail: this.showDetail ? `(${ms[2]})` : undefined,
           name: ms[1]
         }
         if (this.currSymbol && this.currSymbol.children) {
@@ -95,7 +96,7 @@ export default class Parser {
     throw new Error(`Can't find matched }`)
   }
 
-  private getLineRemian(): string {
+  private getLineRemain(): string {
     let chars = ''
     for (let i = this._curr; i < this.len; i++) {
       let ch = this._content[i]

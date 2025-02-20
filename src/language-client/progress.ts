@@ -1,28 +1,24 @@
-/* --------------------------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation. All rights reserved.
- * Licensed under the MIT License. See License.txt in the project root for license information.
- * ------------------------------------------------------------------------------------------ */
 'use strict'
-
-import { ClientCapabilities, WorkDoneProgressCreateParams, WorkDoneProgressCreateRequest } from 'vscode-languageserver-protocol'
-import { BaseLanguageClient, StaticFeature } from './client'
+import type { ClientCapabilities, WorkDoneProgressCreateParams } from 'vscode-languageserver-protocol'
+import { WorkDoneProgressCreateRequest } from '../util/protocol'
+import { ensure, FeatureClient, FeatureState, StaticFeature } from './features'
 import { ProgressPart } from './progressPart'
-// const logger = require('../util/logger')('language-client-progress')
-
-function ensure<T, K extends keyof T>(target: T, key: K): T[K] {
-  if (target[key] === void 0) {
-    target[key] = Object.create(null)
-  }
-  return target[key]
-}
 
 export class ProgressFeature implements StaticFeature {
   private activeParts: Set<ProgressPart> = new Set()
-  constructor(private _client: BaseLanguageClient) {
+  constructor(private _client: FeatureClient<object>) {
+  }
+
+  public get method(): string {
+    return WorkDoneProgressCreateRequest.method
   }
 
   public fillClientCapabilities(capabilities: ClientCapabilities): void {
     ensure(capabilities, 'window')!.workDoneProgress = true
+  }
+
+  public getState(): FeatureState {
+    return { kind: 'window', id: WorkDoneProgressCreateRequest.method, registrations: this.activeParts.size > 0 }
   }
 
   public initialize(): void {

@@ -1,6 +1,9 @@
-import { Neovim } from '@chemzqm/neovim'
-import { Disposable } from 'vscode-languageserver-protocol'
+import { Neovim } from '../../neovim'
+import { Disposable, SymbolKind } from 'vscode-languageserver-protocol'
+import commands from '../../commands'
 import Handler from '../../handler/index'
+import { handleError, toDocumentation } from '../../handler/util'
+import { ProviderName } from '../../languages'
 import { disposeAll } from '../../util'
 import helper from '../helper'
 
@@ -27,19 +30,69 @@ afterEach(async () => {
 })
 
 describe('Handler', () => {
+  describe('util', () => {
+    it('should handleError', () => {
+      handleError(new Error('error'))
+    })
+
+    it('should to documentation', () => {
+      expect(toDocumentation('doc')).toEqual({ content: 'doc', filetype: 'txt' })
+      expect(toDocumentation({ kind: 'markdown', value: 'doc' })).toEqual({ content: 'doc', filetype: 'markdown' })
+    })
+  })
+
   describe('hasProvider', () => {
     it('should check provider for document', async () => {
-      let res = await handler.hasProvider('definition')
+      let res = await helper.doAction('hasProvider', 'definition')
+      expect(res).toBe(false)
+      await nvim.command(`edit +setl\\ buftype=nofile foo`)
+      res = await handler.hasProvider('formatOnType')
       expect(res).toBe(false)
     })
   })
 
-  describe('checkProvier', () => {
+  describe('getIcon', () => {
+    it('should get icon', () => {
+      helper.updateConfiguration('suggest.completionItemKindLabels', {
+        default: 'd'
+      })
+      let res = handler.getIcon(SymbolKind.Array)
+      expect(res).toBeDefined()
+      res = handler.getIcon('a' as any)
+      expect(res.text).toBe('d')
+    })
+  })
+
+  describe('commands', () => {
+    it('should open url', async () => {
+      let fn = jest.fn()
+      let spy = jest.spyOn(nvim, 'call').mockImplementation(() => {
+        fn()
+        return null
+      })
+      await commands.executeCommand('vscode.open', 'http://www.example.com')
+      spy.mockRestore()
+      expect(fn).toBeCalled()
+    })
+
+    it('should restart', async () => {
+      let fn = jest.fn()
+      let spy = jest.spyOn(nvim, 'command').mockImplementation(() => {
+        fn()
+        return null
+      })
+      await commands.executeCommand('workbench.action.reloadWindow')
+      spy.mockRestore()
+      expect(fn).toBeCalled()
+    })
+  })
+
+  describe('checkProvider', () => {
     it('should throw error when provider not found', async () => {
       let doc = await helper.createDocument()
       let err
       try {
-        handler.checkProvier('definition', doc.textDocument)
+        handler.checkProvider(ProviderName.Definition, doc.textDocument)
       } catch (e) {
         err = e
       }

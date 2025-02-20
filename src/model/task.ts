@@ -1,7 +1,8 @@
-import { Neovim } from '@chemzqm/neovim'
+'use strict'
+import { Neovim } from '../neovim'
 import events from '../events'
-import { Disposable, Emitter, Event } from 'vscode-languageserver-protocol'
 import { disposeAll } from '../util'
+import { Disposable, Emitter, Event } from '../util/protocol'
 
 export interface TaskOptions {
   cmd: string
@@ -15,7 +16,6 @@ export interface TaskOptions {
 /**
  * Controls long running task started by vim.
  * Useful to keep the task running after CocRestart.
- *
  * @public
  */
 export default class Task implements Disposable {
@@ -42,29 +42,21 @@ export default class Task implements Disposable {
         this._onStderr.fire(lines)
       }
     }, null, this.disposables)
-    let stdout: string[] = []
-    let timer: NodeJS.Timeout
     events.on('TaskStdout', (id, lines) => {
       if (id == this.id) {
-        if (timer) clearTimeout(timer)
-        stdout.push(...lines)
-        timer = setTimeout(() => {
-          this._onStdout.fire(stdout)
-          stdout = []
-        }, 100)
+        this._onStdout.fire(lines)
       }
     }, null, this.disposables)
   }
 
   /**
    * Start task, task will be restarted when already running.
-   *
    * @param {TaskOptions} opts
    * @returns {Promise<boolean>}
    */
   public async start(opts: TaskOptions): Promise<boolean> {
     let { nvim } = this
-    return await nvim.call('coc#task#start', [this.id, opts])
+    return await nvim.call('coc#task#start', [this.id, opts]) as boolean
   }
 
   /**
@@ -80,7 +72,7 @@ export default class Task implements Disposable {
    */
   public get running(): Promise<boolean> {
     let { nvim } = this
-    return nvim.call('coc#task#running', [this.id])
+    return nvim.call('coc#task#running', [this.id]) as Promise<boolean>
   }
 
   /**

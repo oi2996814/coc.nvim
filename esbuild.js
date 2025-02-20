@@ -1,75 +1,98 @@
 const cp = require('child_process')
-const fs = require('fs')
-const path = require('path')
-let revision = ''
-try {
-  let res = cp.execSync('git rev-parse HEAD', {encoding: 'utf8'})
-  revision = res.trim().slice(0, 10)
-} catch (e) {
-  // ignore
+let revision = 'master'
+if (process.env.NODE_ENV !== 'development') {
+  try {
+    let res = cp.execSync(`git log -1 --date=iso --pretty=format:'"%h","%ad"'`, {encoding: 'utf8'})
+    revision = res.replaceAll('"', '').replace(',', ' ')
+  } catch (e) {
+    // ignore
+  }
 }
 
-let envPlugin = {
-  name: 'env',
+let entryPlugin = {
+  name: 'entry',
   setup(build) {
-    build.onResolve({filter: /\/appenders/}, args => {
-      let fullpath = path.join(args.resolveDir, args.path)
+    build.onResolve({filter: /^index\.js$/}, args => {
       return {
-        path: path.relative(__dirname, fullpath).replace(/\\/g, '/'),
-        namespace: 'env-ns'
+        path: args.path,
+        namespace: 'entry-ns'
       }
     })
-    build.onLoad({filter: /^node_modules\/log4js\/lib\/appenders$/, namespace: 'env-ns'}, args => {
-      let content = fs.readFileSync(path.join(args.path, 'index.js'), 'utf8')
+    build.onLoad({filter: /.*/, namespace: 'entry-ns'}, () => {
+      let contents = `'use strict'
+if (global.__isMain) {
+  Object.defineProperty(console, 'log', {
+    value() {
+      if (logger) logger.info(...arguments)
+    }
+  })
+  const { createLogger } = require('./src/logger/index')
+  const logger = createLogger('server')
+  process.on('uncaughtException', function(err) {
+    let msg = 'Uncaught exception: ' + err.message
+    console.error(msg)
+    logger.error('uncaughtException', err.stack)
+  })
+  process.on('unhandledRejection', function(reason, p) {
+    if (reason instanceof Error) {
+      if (typeof reason.code === 'number') {
+        let msg = 'Unhandled response error ' + reason.code + ' from language server: ' + reason.message
+        if (reason.data != null) {
+          console.error(msg, reason.data)
+        } else {
+          console.error(msg)
+        }
+      } else {
+        console.error('UnhandledRejection: ' + reason.message + '\\n' + reason.stack)
+      }
+    } else {
+      console.error('UnhandledRejection: ' + reason)
+    }
+    logger.error('unhandledRejection ', p, reason)
+  })
+  const attach = require('./src/attach').default
+  attach({ reader: process.stdin, writer: process.stdout })
+} else {
+  const exports = require('./src/index')
+  const logger = require('./src/logger').logger
+  const attach = require('./src/attach').default
+  module.exports = {attach, exports, logger, loadExtension: (filepath, active) => {
+    return exports.extensions.manager.load(filepath, active)
+  }}
+}`
       return {
-        contents: content.replace(/require\.main/g, '""'),
-        resolveDir: args.path
+        contents,
+        resolveDir: __dirname
       }
     })
   }
 }
 
-async function start(watch) {
+async function start() {
   await require('esbuild').build({
-    entryPoints: ['src/main.ts'],
+    entryPoints: ['index.js'],
     bundle: true,
-    watch,
-    minify: process.env.NODE_ENV === 'production',
     sourcemap: process.env.NODE_ENV === 'development',
-    define: {REVISION: '"' + revision + '"', ESBUILD: 'true'},
+    define: {
+      REVISION: '"' + revision + '"',
+      ESBUILD: 'true',
+      'process.env.COC_NVIM': '"1"',
+      'global.__TEST__': 'false'
+    },
     mainFields: ['module', 'main'],
     platform: 'node',
-    target: 'node12.12',
-    outfile: 'build/index.js',
+    treeShaking: true,
+    target: 'node16.18',
+    plugins: [entryPlugin],
     banner: {
-      js: `(function () {
-  var v = process.version
-  var parts = v.slice(1).split('.')
-  var major = parseInt(parts[0], 10)
-  var minor = parseInt(parts[1], 10)
-  if (major < 12 || (major == 12 && minor < 12)) {
-    throw new Error('coc.nvim requires node >= v12.12.0, current version: ' + v)
-  }
-})(); `
+      js: `"use strict";
+global.__starttime = Date.now();
+global.__isMain = require.main === module;`
     },
-    plugins: [envPlugin]
+    outfile: 'build/index.js'
   })
 }
 
-let watch = false
-if (process.argv.length > 2 && process.argv[2] === '--watch') {
-  console.log('watching...')
-  watch = {
-    onRebuild(error) {
-      if (error) {
-        console.error('watch build failed:', error)
-      } else {
-        console.log('watch build succeeded')
-      }
-    },
-  }
-}
-
-start(watch).catch(e => {
+start().catch(e => {
   console.error(e)
 })

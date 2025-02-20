@@ -1,18 +1,134 @@
-import { Location, Range } from 'vscode-languageserver-protocol'
+'use strict'
+import { ParseError, printParseErrorCode } from 'jsonc-parser'
 import { TextDocument } from 'vscode-languageserver-textdocument'
-import { parse, ParseError } from 'jsonc-parser'
-import { IConfigurationModel, ErrorItem } from '../types'
-import { emptyObject, objectLiteral } from '../util/is'
-import { equals } from '../util/object'
-import fs from 'fs'
+import { Diagnostic, DiagnosticSeverity, Range } from 'vscode-languageserver-types'
 import { URI } from 'vscode-uri'
-import path, { dirname, resolve } from 'path'
-const logger = require('../util/logger')('configuration-util')
-declare const ESBUILD
+import { distinct } from '../util/array'
+import * as Is from '../util/is'
+import { os } from '../util/node'
+import { equals, hasOwnProperty } from '../util/object'
+import { ConfigurationResourceScope, ConfigurationTarget, ConfigurationUpdateTarget, IConfigurationChange, IConfigurationOverrides } from './types'
+const documentUri = 'file:///1'
 
-const pluginRoot = typeof ESBUILD === 'undefined' ? resolve(__dirname, '../..') : dirname(__dirname)
+export interface IConfigurationCompareResult {
+  added: string[]
+  removed: string[]
+  updated: string[]
+  overrides: [string, string[]][]
+}
 
-export type ShowError = (errors: ErrorItem[]) => void
+const OVERRIDE_IDENTIFIER_PATTERN = `\\[([^\\]]+)\\]`
+const OVERRIDE_IDENTIFIER_REGEX = new RegExp(OVERRIDE_IDENTIFIER_PATTERN, 'g')
+export const OVERRIDE_PROPERTY_PATTERN = `^(${OVERRIDE_IDENTIFIER_PATTERN})+$`
+export const OVERRIDE_PROPERTY_REGEX = new RegExp(OVERRIDE_PROPERTY_PATTERN)
+
+/**
+ * Basic expand for ${env:value}, ${cwd}, ${userHome}
+ */
+export function expand(input: string): string {
+  return input.replace(/\$\{(.*?)\}/g, (match: string, name: string) => {
+    if (name.startsWith('env:')) {
+      let key = name.split(':')[1]
+      return process.env[key] ?? match
+    }
+    switch (name) {
+      case 'userHome':
+        return os.homedir()
+      case 'cwd':
+        return process.cwd()
+      default:
+        return match
+    }
+  })
+}
+
+export function expandObject(obj: any): any {
+  if (obj == null) return obj
+  if (typeof obj === 'string') return expand(obj)
+  if (Array.isArray(obj)) return obj.map(obj => expandObject(obj))
+  if (Is.objectLiteral(obj)) {
+    for (let key of Object.keys(obj)) {
+      obj[key] = expandObject(obj[key])
+    }
+    return obj
+  }
+  return obj
+}
+
+export function convertTarget(updateTarget: ConfigurationUpdateTarget): ConfigurationTarget {
+  let target: ConfigurationTarget
+  switch (updateTarget) {
+    case ConfigurationUpdateTarget.Global:
+      target = ConfigurationTarget.User
+      break
+    case ConfigurationUpdateTarget.Workspace:
+      target = ConfigurationTarget.Workspace
+      break
+    default:
+      target = ConfigurationTarget.WorkspaceFolder
+  }
+  return target
+}
+
+export function scopeToOverrides(scope: ConfigurationResourceScope): IConfigurationOverrides {
+  let overrides: IConfigurationOverrides
+  if (typeof scope === 'string') {
+    overrides = { resource: scope }
+  } else if (URI.isUri(scope)) {
+    overrides = { resource: scope.toString() }
+  } else if (scope != null) {
+    let uri = scope['uri']
+    let languageId = scope['languageId']
+    overrides = { resource: uri, overrideIdentifier: languageId }
+  }
+  return overrides
+}
+
+export function overrideIdentifiersFromKey(key: string): string[] {
+  const identifiers: string[] = []
+  if (OVERRIDE_PROPERTY_REGEX.test(key)) {
+    let matches = OVERRIDE_IDENTIFIER_REGEX.exec(key)
+    while (matches?.length) {
+      const identifier = matches[1].trim()
+      if (identifier) {
+        identifiers.push(identifier)
+      }
+      matches = OVERRIDE_IDENTIFIER_REGEX.exec(key)
+    }
+  }
+  return distinct(identifiers)
+}
+
+function getOrSet<K, V>(map: Map<K, V>, key: K, value: V): V {
+  let result = map.get(key)
+  if (result === undefined) {
+    result = value
+    map.set(key, result)
+  }
+
+  return result
+}
+
+export function mergeChanges(...changes: IConfigurationChange[]): IConfigurationChange {
+  if (changes.length === 0) {
+    return { keys: [], overrides: [] }
+  }
+  if (changes.length === 1) {
+    return changes[0]
+  }
+  const keysSet = new Set<string>()
+  const overridesMap = new Map<string, Set<string>>()
+  for (const change of changes) {
+    change.keys.forEach(key => keysSet.add(key))
+    change.overrides.forEach(([identifier, keys]) => {
+      const result = getOrSet(overridesMap, identifier, new Set<string>())
+      keys.forEach(key => result.add(key))
+    })
+  }
+  const overrides: [string, string[]][] = []
+  overridesMap.forEach((keys, identifier) => overrides.push([identifier, [...keys.values()]]))
+  return { keys: [...keysSet.values()], overrides }
+}
 
 export function mergeConfigProperties(obj: any): any {
   let res = {}
@@ -37,162 +153,53 @@ export function mergeConfigProperties(obj: any): any {
   return res
 }
 
-export function parseContentFromFile(filepath: string | null, onError?: ShowError): IConfigurationModel {
-  if (!filepath || !fs.existsSync(filepath)) return { contents: {} }
-  let content: string
-  let uri = URI.file(filepath).toString()
-  try {
-    content = fs.readFileSync(filepath, 'utf8')
-  } catch (_e) {
-    content = ''
-  }
-  let [errors, contents] = parseConfiguration(content)
-  if (errors && errors.length) {
-    onError(convertErrors(uri, content, errors))
-  }
-  return { contents }
-}
-
-export function parseConfiguration(content: string): [ParseError[], any] {
-  if (content.length == 0) return [[], {}]
-  let errors: ParseError[] = []
-  let data = parse(content, errors, { allowTrailingComma: true })
-  function addProperty(current: object, key: string, remains: string[], value: any): void {
-    if (remains.length == 0) {
-      current[key] = convert(value)
-    } else {
-      if (!current[key]) current[key] = {}
-      let o = current[key]
-      let first = remains.shift()
-      addProperty(o, first, remains, value)
-    }
-  }
-
-  function convert(obj: any, split = false): any {
-    if (!objectLiteral(obj)) return obj
-    if (emptyObject(obj)) return {}
-    let dest = {}
-    for (let key of Object.keys(obj)) {
-      // not split uri
-      if (split && key.includes('.') && !/^.+:\//.test(key)) {
-        let parts = key.split('.')
-        let first = parts.shift()
-        addProperty(dest, first, parts, obj[key])
-      } else {
-        dest[key] = convert(obj[key])
-      }
-    }
-    return dest
-  }
-  return [errors, convert(data, true)]
-}
-
-export function convertErrors(uri: string, content: string, errors: ParseError[]): ErrorItem[] {
-  let items: ErrorItem[] = []
-  let document = TextDocument.create(uri, 'json', 0, content)
+export function convertErrors(content: string, errors: ParseError[]): Diagnostic[] {
+  let items: Diagnostic[] = []
+  let document = TextDocument.create(documentUri, 'json', 0, content)
   for (let err of errors) {
-    let msg = 'parse error'
-    switch (err.error) {
-      case 2:
-        msg = 'invalid number'
-        break
-      case 8:
-        msg = 'close brace expected'
-        break
-      case 5:
-        msg = 'colon expected'
-        break
-      case 6:
-        msg = 'comma expected'
-        break
-      case 9:
-        msg = 'end of file expected'
-        break
-      case 16:
-        msg = 'invaliad character'
-        break
-      case 10:
-        msg = 'invalid commment token'
-        break
-      case 15:
-        msg = 'invalid escape character'
-        break
-      case 1:
-        msg = 'invalid symbol'
-        break
-      case 14:
-        msg = 'invalid unicode'
-        break
-      case 3:
-        msg = 'property name expected'
-        break
-      case 13:
-        msg = 'unexpected end of number'
-        break
-      case 12:
-        msg = 'unexpected end of string'
-        break
-      case 11:
-        msg = 'unexpected end of comment'
-        break
-      case 4:
-        msg = 'value expected'
-        break
-      default:
-        msg = 'Unknwn error'
-        break
-    }
-    let range: Range = {
-      start: document.positionAt(err.offset),
-      end: document.positionAt(err.offset + err.length),
-    }
-    let loc = Location.create(uri, range)
-    items.push({ location: loc, message: msg })
+    const range = Range.create(document.positionAt(err.offset), document.positionAt(err.offset + err.length))
+    items.push(Diagnostic.create(range, printParseErrorCode(err.error), DiagnosticSeverity.Error))
   }
   return items
 }
 
-export function addToValueTree(
-  settingsTreeRoot: any,
-  key: string,
-  value: any,
-  conflictReporter: (message: string) => void
-): void {
+export function toValuesTree(properties: { [qualifiedKey: string]: any }, conflictReporter: (message: string) => void, doExpand = false): any {
+  const root = Object.create(null)
+  for (const key in properties) {
+    addToValueTree(root, key, properties[key], conflictReporter, doExpand)
+  }
+  return root
+}
+
+export function addToValueTree(settingsTreeRoot: any, key: string, value: any, conflictReporter: (message: string) => void, doExpand = false): void {
   const segments = key.split('.')
-  const last = segments.pop()
+  const last = segments.pop()!
 
   let curr = settingsTreeRoot
   for (let i = 0; i < segments.length; i++) {
-    let s = segments[i]
+    const s = segments[i]
     let obj = curr[s]
     switch (typeof obj) {
-      case 'function': {
-        obj = curr[s] = {}
+      case 'undefined':
+        obj = curr[s] = Object.create(null)
         break
-      }
-      case 'undefined': {
-        obj = curr[s] = {}
-        break
-      }
       case 'object':
         break
       default:
-        conflictReporter(
-          `Ignoring ${key} as ${segments
-            .slice(0, i + 1)
-            .join('.')} is ${JSON.stringify(obj)}`
-        )
+        if (conflictReporter) conflictReporter(`Ignoring ${key} as ${segments.slice(0, i + 1).join('.')} is ${JSON.stringify(obj)}`)
         return
     }
     curr = obj
   }
 
-  if (typeof curr === 'object') {
-    curr[last] = value // workaround https://github.com/Microsoft/vscode/issues/13606
+  if (typeof curr === 'object' && curr !== null) {
+    if (doExpand) {
+      curr[last] = expandObject(value)
+    } else {
+      curr[last] = value
+    }
   } else {
-    conflictReporter(
-      `Ignoring ${key} as ${segments.join('.')} is ${JSON.stringify(curr)}`
-    )
+    if (conflictReporter) conflictReporter(`Ignoring ${key} as ${segments.join('.')} is ${JSON.stringify(curr)}`)
   }
 }
 
@@ -235,61 +242,83 @@ export function getConfigurationValue<T>(
     }
     return current as T
   }
-
   const path = settingPath.split('.')
   const result = accessSetting(config, path)
-
   return typeof result === 'undefined' ? defaultValue : result
 }
 
-export function loadDefaultConfigurations(): IConfigurationModel {
-  let file = path.join(pluginRoot, 'data/schema.json')
-  if (!fs.existsSync(file)) {
-    console.error('schema.json not found, reinstall coc.nvim to fix this!')
-    return { contents: {} }
-  }
-  let content = fs.readFileSync(file, 'utf8')
-  let { properties } = JSON.parse(content)
-  let config = {}
-  Object.keys(properties).forEach(key => {
-    let value = properties[key].default
-    if (value !== undefined) {
-      addToValueTree(config, key, value, message => {
-        logger.error(message)
-      })
+export function toJSONObject(obj: any): any {
+  if (obj) {
+    if (Array.isArray(obj)) {
+      return obj.map(toJSONObject)
+    } else if (typeof obj === 'object') {
+      const res = Object.create(null)
+      for (const key in obj) {
+        if (Object.prototype.hasOwnProperty.call(obj, key)) {
+          res[key] = toJSONObject(obj[key])
+        }
+      }
+      return res
     }
-  })
-  return { contents: config }
+  }
+  return obj
 }
 
-export function getKeys(obj: { [key: string]: any }, curr?: string): string[] {
-  let keys: string[] = []
-  for (let key of Object.keys(obj)) {
-    let val = obj[key]
-    let newKey = curr ? `${curr}.${key}` : key
-    keys.push(newKey)
-    if (objectLiteral(val)) {
-      keys.push(...getKeys(val, newKey))
+/**
+ * Compare too configuration contents
+ */
+export function compareConfigurationContents(to: { keys: string[]; contents: any } | undefined, from: { keys: string[]; contents: any } | undefined) {
+  const added = to
+    ? from ? to.keys.filter(key => from.keys.indexOf(key) === -1) : [...to.keys]
+    : []
+  const removed = from
+    ? to ? from.keys.filter(key => to.keys.indexOf(key) === -1) : [...from.keys]
+    : []
+  const updated: string[] = []
+
+  if (to && from) {
+    for (const key of from.keys) {
+      if (to.keys.indexOf(key) !== -1) {
+        const value1 = getConfigurationValue(from.contents, key)
+        const value2 = getConfigurationValue(to.contents, key)
+        if (!equals(value1, value2)) {
+          updated.push(key)
+        }
+      }
     }
   }
-  return keys
+  return { added, removed, updated }
 }
 
-export function getChangedKeys(from: { [key: string]: any }, to: { [key: string]: any }): string[] {
-  let keys: string[] = []
-  let fromKeys = getKeys(from)
-  let toKeys = getKeys(to)
-  const added = toKeys.filter(key => !fromKeys.includes(key))
-  const removed = fromKeys.filter(key => !toKeys.includes(key))
-  keys.push(...added)
-  keys.push(...removed)
-  for (const key of fromKeys) {
-    if (!toKeys.includes(key)) continue
-    const value1 = getConfigurationValue<any>(from, key)
-    const value2 = getConfigurationValue<any>(to, key)
-    if (!equals(value1, value2)) {
-      keys.push(key)
-    }
+export function getDefaultValue(type: string | string[] | undefined): any {
+  // eslint-disable-next-line @typescript-eslint/consistent-type-assertions
+  const t = Array.isArray(type) ? (<string[]>type)[0] : <string>type
+  switch (t) {
+    case 'boolean':
+      return false
+    case 'integer':
+    case 'number':
+      return 0
+    case 'string':
+      return ''
+    case 'array':
+      return []
+    case 'object':
+      return {}
+    default:
+      return null
   }
-  return keys
+}
+
+export function lookUp(tree: any, key: string): any {
+  if (key) {
+    if (tree && hasOwnProperty(tree, key)) return tree[key]
+    const parts = key.split('.')
+    let node = tree
+    for (let i = 0; node && i < parts.length; i++) {
+      node = node[parts[i]]
+    }
+    return node
+  }
+  return tree
 }

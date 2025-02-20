@@ -1,21 +1,19 @@
-import { CancellationToken, Disposable, DocumentSelector, Location, Position, LocationLink } from 'vscode-languageserver-protocol'
-import { TextDocument } from 'vscode-languageserver-textdocument'
-import { DeclarationProvider } from './index'
-import Manager, { ProviderItem } from './manager'
+'use strict'
 import { v4 as uuid } from 'uuid'
-const logger = require('../util/logger')('definitionManager')
+import { TextDocument } from 'vscode-languageserver-textdocument'
+import { Position } from 'vscode-languageserver-types'
+import { LocationWithTarget } from '../types'
+import { CancellationToken, Disposable } from '../util/protocol'
+import { DeclarationProvider, DocumentSelector } from './index'
+import Manager from './manager'
 
 export default class DeclarationManager extends Manager<DeclarationProvider> {
 
   public register(selector: DocumentSelector, provider: DeclarationProvider): Disposable {
-    let item: ProviderItem<DeclarationProvider> = {
+    return this.addProvider({
       id: uuid(),
       selector,
       provider
-    }
-    this.providers.add(item)
-    return Disposable.create(() => {
-      this.providers.delete(item)
     })
   }
 
@@ -23,10 +21,15 @@ export default class DeclarationManager extends Manager<DeclarationProvider> {
     document: TextDocument,
     position: Position,
     token: CancellationToken
-  ): Promise<Location[] | Location | LocationLink[] | null> {
-    let item = this.getProvider(document)
-    if (!item) return null
-    let { provider } = item
-    return await Promise.resolve(provider.provideDeclaration(document, position, token))
+  ): Promise<LocationWithTarget[]> {
+    const providers = this.getProviders(document)
+    let locations: LocationWithTarget[] = []
+    const results = await Promise.allSettled(providers.map(item => {
+      return Promise.resolve(item.provider.provideDeclaration(document, position, token)).then(location => {
+        this.addLocation(locations, location)
+      })
+    }))
+    this.handleResults(results, 'provideDeclaration')
+    return locations
   }
 }

@@ -1,10 +1,11 @@
-import marked from 'marked'
-import Renderer from '../../markdown/renderer'
+import { marked } from 'marked'
+import Renderer, { bulletPointLine, fixHardReturn, generateTableRow, identify, numberedLine, toSpaces, toSpecialSpaces } from '../../markdown/renderer'
 import * as styles from '../../markdown/styles'
 import { parseAnsiHighlights, AnsiResult } from '../../util/ansiparse'
 
 marked.setOptions({
-  renderer: new Renderer()
+  renderer: new Renderer(),
+  hooks: Renderer.hooks,
 })
 
 function parse(text: string): AnsiResult {
@@ -14,7 +15,7 @@ function parse(text: string): AnsiResult {
 }
 
 describe('styles', () => {
-  it('should add styles', async () => {
+  it('should add styles', () => {
     let keys = ['gray', 'magenta', 'bold', 'underline', 'italic', 'strikethrough', 'yellow', 'green', 'blue']
     for (let key of keys) {
       let res = styles[key]('text')
@@ -24,7 +25,19 @@ describe('styles', () => {
 })
 
 describe('Renderer of marked', () => {
-  it('should create bold highlights', async () => {
+  it('should convert', () => {
+    expect(identify('  ', '')).toBe('')
+    expect(fixHardReturn('a\rb', true)).toBe('a\nb')
+    expect(toSpaces('ab')).toBe('  ')
+    expect(toSpecialSpaces('ab')).toBe('\0\0\0\0\0\0')
+    expect(bulletPointLine('  ', '  * foo')).toBe('  * foo')
+    expect(bulletPointLine('  ', 'foo')).toBe('\0\0\0\0\0\0foo')
+    expect(bulletPointLine('  ', '\0\0\0foo')).toBe('\0\0\0foo')
+    expect(generateTableRow('')).toEqual([])
+    expect(numberedLine('  ', 'foo', 1).line).toBe('   foo')
+  })
+
+  it('should create bold highlights', () => {
     let res = parse('**note**.')
     expect(res.highlights[0]).toEqual({
       span: [0, 4],
@@ -32,7 +45,7 @@ describe('Renderer of marked', () => {
     })
   })
 
-  it('should create italic highlights', async () => {
+  it('should create italic highlights', () => {
     let res = parse('_note_.')
     expect(res.highlights[0]).toEqual({
       span: [0, 4],
@@ -40,7 +53,7 @@ describe('Renderer of marked', () => {
     })
   })
 
-  it('should create underline highlights for link', async () => {
+  it('should create underline highlights for link', () => {
     let res = parse('[baidu](https://baidu.com)')
     expect(res.highlights[0]).toEqual({
       span: [0, 5],
@@ -51,9 +64,11 @@ describe('Renderer of marked', () => {
       span: [0, 17],
       hlGroup: 'CocUnderline'
     })
+    res = parse('https://baidu.com/%25E0%25A4%25A')
+    expect(res.line).toBe('')
   })
 
-  it('should parse link', async () => {
+  it('should parse link', () => {
     // let res = parse('https://doc.rust-lang.org/nightly/core/iter/traits/iterator/Iterator.t.html#map.v')
     // console.log(JSON.stringify(res, null, 2))
     let link = 'https://doc.rust-lang.org/nightly/core/iter/traits/iterator/Iterator.t.html#map.v'
@@ -64,7 +79,7 @@ describe('Renderer of marked', () => {
     expect(res.highlights[0].hlGroup).toBe('CocUnderline')
   })
 
-  it('should create highlight for code span', async () => {
+  it('should create highlight for code span', () => {
     let res = parse('`let foo = "bar"`')
     expect(res.highlights[0]).toEqual({
       span: [0, 15],
@@ -72,30 +87,35 @@ describe('Renderer of marked', () => {
     })
   })
 
-  it('should create header highlights', async () => {
+  it('should create header highlights', () => {
     let res = parse('# header')
     expect(res.highlights[0]).toEqual({
-      span: [0, 8],
+      span: [0, 6],
       hlGroup: 'CocMarkdownHeader'
     })
     res = parse('## header')
     expect(res.highlights[0]).toEqual({
-      span: [0, 9],
+      span: [0, 6],
       hlGroup: 'CocMarkdownHeader'
     })
     res = parse('### header')
     expect(res.highlights[0]).toEqual({
-      span: [0, 10],
+      span: [0, 6],
       hlGroup: 'CocMarkdownHeader'
     })
   })
 
-  it('should indent blockquote', async () => {
+  it('should indent blockquote', () => {
     let res = parse('> header')
     expect(res.line).toBe('  header')
   })
 
-  it('should preserve code block', async () => {
+  it('should parse image', async () => {
+    let res = parse('![title](http://www.baidu.com)')
+    expect(res.line).toMatch('baidu')
+  })
+
+  it('should preserve code block', () => {
     let text = '``` js\nconsole.log("foo")\n```'
     let m = marked(text)
     expect(m.split('\n')).toEqual([
@@ -106,7 +126,7 @@ describe('Renderer of marked', () => {
     ])
   })
 
-  it('should renderer table', async () => {
+  it('should renderer table', () => {
     let text = `
 | Syntax      | Description |
 | ----------- | ----------- |

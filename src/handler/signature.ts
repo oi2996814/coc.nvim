@@ -1,18 +1,24 @@
-import { Neovim } from '@chemzqm/neovim'
-import { CancellationTokenSource, Disposable, MarkupContent, Position, SignatureHelp, SignatureHelpTriggerKind } from 'vscode-languageserver-protocol'
+'use strict'
+import { Neovim } from '../neovim'
+import { MarkupContent, Position, SignatureHelp } from 'vscode-languageserver-types'
+import { IConfigurationChangeEvent } from '../configuration/types'
 import events from '../events'
-import languages from '../languages'
+import languages, { ProviderName } from '../languages'
 import Document from '../model/document'
-import FloatFactory from '../model/floatFactory'
-import { ConfigurationChangeEvent, FloatConfig, HandlerDelegate } from '../types'
-import { disposeAll, isMarkdown } from '../util'
-import { byteLength } from '../util/string'
+import { FloatConfig, FloatFactory } from '../types'
+import { disposeAll, getConditionValue } from '../util'
+import { isFalsyOrEmpty } from '../util/array'
+import { debounce } from '../util/node'
+import { CancellationTokenSource, Disposable, SignatureHelpTriggerKind } from '../util/protocol'
+import { byteLength, byteSlice } from '../util/string'
+import window from '../window'
 import workspace from '../workspace'
-const logger = require('../util/logger')('handler-signature')
+import { HandlerDelegate } from './types'
+import { toDocumentation } from './util'
 
 interface SignatureConfig {
   wait: number
-  trigger: boolean
+  enableTrigger: boolean
   target: string
   preferAbove: boolean
   hideOnChange: boolean
@@ -30,25 +36,25 @@ interface SignaturePart {
   type: 'Label' | 'MoreMsg' | 'Normal'
 }
 
+const debounceTime = getConditionValue(100, 10)
+
 export default class Signature {
-  private timer: NodeJS.Timer
+  private timer: NodeJS.Timeout
   private config: SignatureConfig
   private signatureFactory: FloatFactory
   private lastPosition: SignaturePosition | undefined
   private disposables: Disposable[] = []
   private tokenSource: CancellationTokenSource | undefined
   constructor(private nvim: Neovim, private handler: HandlerDelegate) {
-    this.signatureFactory = new FloatFactory(nvim)
     this.loadConfiguration()
+    this.signatureFactory = window.createFloatFactory(Object.assign({
+      preferTop: this.config.preferAbove,
+      autoHide: false,
+      modes: ['i', 'ic', 's'],
+    }, this.config.floatConfig))
     this.disposables.push(this.signatureFactory)
     workspace.onDidChangeConfiguration(this.loadConfiguration, this, this.disposables)
-    events.on('CursorMovedI', async (bufnr, cursor) => {
-      let pos = this.lastPosition
-      if (!pos) return
-      // avoid close signature for valid position.
-      if (pos.bufnr == bufnr && pos.lnum == cursor[0] && pos.col <= cursor[1]) return
-      this.signatureFactory.close()
-    }, null, this.disposables)
+    events.on('CursorMovedI', debounce(this.checkCurosr.bind(this), debounceTime), null, this.disposables)
     events.on(['InsertLeave', 'BufEnter'], () => {
       this.tokenSource?.cancel()
     }, null, this.disposables)
@@ -58,30 +64,38 @@ export default class Signature {
       }
     }, null, this.disposables)
     events.on('TextInsert', async (bufnr, info, character) => {
-      if (!this.config.trigger) return
-      let doc = this.getTextDocument(bufnr)
-      if (!doc || !languages.shouldTriggerSignatureHelp(doc.textDocument, character)) return
+      if (!this.config.enableTrigger) return
+      let doc = workspace.getDocument(bufnr)
+      if (!doc || !doc.attached || !languages.shouldTriggerSignatureHelp(doc.textDocument, character)) return
       await this._triggerSignatureHelp(doc, { line: info.lnum - 1, character: info.pre.length }, false)
+    }, null, this.disposables)
+    window.onDidChangeActiveTextEditor(() => {
+      this.loadConfiguration()
     }, null, this.disposables)
   }
 
-  private getTextDocument(bufnr: number): Document | undefined {
+  private checkCurosr(bufnr: number, cursor: [number, number]): void {
+    let pos = this.lastPosition
+    let floatFactory = this.signatureFactory
+    if (!pos || bufnr !== pos.bufnr || floatFactory.window == null) return
     let doc = workspace.getDocument(bufnr)
-    if (!doc || doc.isCommandLine || !doc.attached) return
-    return doc
+    if (!doc || cursor[0] != pos.lnum || cursor[1] < pos.col) {
+      floatFactory.close()
+      return
+    }
+    let line = doc.getline(pos.lnum - 1)
+    let text = byteSlice(line, pos.col - 1, cursor[1] - 1)
+    if (text.endsWith(')')) return floatFactory.close()
   }
 
-  private loadConfiguration(e?: ConfigurationChangeEvent): void {
+  public loadConfiguration(e?: IConfigurationChangeEvent): void {
     if (!e || e.affectsConfiguration('signature')) {
-      let config = workspace.getConfiguration('signature')
-      let target = config.get<string>('target', 'float')
-      if (target == 'float' && !workspace.floatSupported) {
-        target = 'echo'
-      }
+      let doc = window.activeTextEditor?.document
+      let config = workspace.getConfiguration('signature', doc)
       this.config = {
-        target,
+        target: config.get<string>('target', 'float'),
         floatConfig: config.get('floatConfig', {}),
-        trigger: config.get<boolean>('enable', true),
+        enableTrigger: config.get<boolean>('enable', true),
         wait: Math.max(config.get<number>('triggerSignatureWait', 500), 200),
         preferAbove: config.get<boolean>('preferShownAbove', true),
         hideOnChange: config.get<boolean>('hideOnTextChange', false),
@@ -90,24 +104,12 @@ export default class Signature {
   }
 
   public async triggerSignatureHelp(): Promise<boolean> {
-    let { doc, position, mode } = await this.handler.getCurrentState()
-    if (!languages.hasProvider('signature', doc.textDocument)) return false
-    let offset = 0
-    let character = position.character
-    if (mode == 's') {
-      let placeholder = await this.nvim.getVar('coc_last_placeholder') as any
-      if (placeholder) {
-        let { start, end, bufnr } = placeholder
-        if (bufnr == doc.bufnr && start.line == end.line && start.line == position.line) {
-          position = Position.create(start.line, start.character)
-          offset = character - position.character
-        }
-      }
-    }
-    return await this._triggerSignatureHelp(doc, position, true, offset)
+    let { doc, position } = await this.handler.getCurrentState()
+    if (!languages.hasProvider(ProviderName.Signature, doc.textDocument)) return false
+    return await this._triggerSignatureHelp(doc, position, true, 0)
   }
 
-  private async _triggerSignatureHelp(doc: Document, position: Position, invoke = true, offset = 0): Promise<boolean> {
+  private async _triggerSignatureHelp(doc: Document, position: Position, invoke: boolean, offset = 0): Promise<boolean> {
     this.tokenSource?.cancel()
     let tokenSource = this.tokenSource = new CancellationTokenSource()
     let token = tokenSource.token
@@ -146,13 +148,18 @@ export default class Signature {
 
   private async showSignatureHelp(doc: Document, position: Position, signatureHelp: SignatureHelp, offset: number): Promise<void> {
     let { signatures, activeParameter } = signatureHelp
+    activeParameter = typeof activeParameter === 'number' ? activeParameter : undefined
     let paramDoc: string | MarkupContent = null
     let startOffset = offset
     let docs = signatures.reduce((p, c, idx) => {
       let activeIndexes: [number, number] = null
+      let activeIndex = c.activeParameter ?? activeParameter
+      if (activeIndex === undefined && !isFalsyOrEmpty(c.parameters)) {
+        activeIndex = 0
+      }
       let nameIndex = c.label.indexOf('(')
-      if (idx == 0 && activeParameter != null) {
-        let active = c.parameters?.[activeParameter]
+      if (idx == 0 && typeof activeIndex === 'number') {
+        let active = c.parameters?.[activeIndex]
         if (active) {
           let after = c.label.slice(nameIndex == -1 ? 0 : nameIndex)
           paramDoc = active.documentation
@@ -183,40 +190,19 @@ export default class Signature {
         active: activeIndexes
       })
       if (paramDoc) {
-        let content = typeof paramDoc === 'string' ? paramDoc : paramDoc.value
-        if (content.trim().length) {
-          p.push({
-            content,
-            filetype: isMarkdown(c.documentation) ? 'markdown' : 'txt'
-          })
-        }
+        p.push(toDocumentation(paramDoc))
       }
       if (idx == 0 && c.documentation) {
-        let { documentation } = c
-        let content = typeof documentation === 'string' ? documentation : documentation.value
-        if (content.trim().length) {
-          p.push({
-            content,
-            filetype: isMarkdown(c.documentation) ? 'markdown' : 'txt'
-          })
-        }
+        p.push(toDocumentation(c.documentation))
       }
       return p
     }, [])
     let content = doc.getline(position.line, false).slice(0, position.character)
     this.lastPosition = { bufnr: doc.bufnr, lnum: position.line + 1, col: byteLength(content) + 1 }
-    const excludeImages = workspace.getConfiguration('coc.preferences').get<boolean>('excludeImageLinksInMarkdownDocument')
-    let config = this.signatureFactory.applyFloatConfig({
-      preferTop: this.config.preferAbove,
-      autoHide: false,
-      offsetX: offset,
-      modes: ['i', 'ic', 's'],
-      excludeImages
-    }, this.config.floatConfig)
-    await this.signatureFactory.show(docs, config)
+    await this.signatureFactory.show(docs, { offsetX: offset })
   }
 
-  private echoSignature(signatureHelp: SignatureHelp): void {
+  public echoSignature(signatureHelp: SignatureHelp): void {
     let { signatures, activeParameter } = signatureHelp
     let columns = workspace.env.columns
     signatures = signatures.slice(0, workspace.env.cmdheight)
@@ -272,7 +258,7 @@ export default class Signature {
       }
       signatureList.push(parts)
     }
-    this.nvim.callTimer('coc#util#echo_signatures', [signatureList], true)
+    this.nvim.callTimer('coc#ui#echo_signatures', [signatureList], true)
   }
 
   public dispose(): void {

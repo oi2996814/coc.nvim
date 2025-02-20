@@ -1,5 +1,11 @@
-import { Neovim } from '@chemzqm/neovim'
-const isVim = process.env.VIM_NODE_RPC == '1'
+'use strict'
+import { Neovim } from '../neovim'
+import { isVim } from '../util/constants'
+
+interface WindowInfo {
+  topline: number,
+  botline: number
+}
 
 /**
  * More methods for float window/popup
@@ -8,13 +14,14 @@ export default class Popup {
   constructor(
     private nvim: Neovim,
     public readonly winid,
-    public readonly bufnr) {
+    public readonly bufnr,
+    public linecount: number,
+    private _currIndex = 0
+  ) {
   }
 
-  public get valid(): Promise<boolean> {
-    return this.nvim.call('coc#float#valid', [this.winid]).then(res => {
-      return !!res
-    })
+  public get currIndex(): number {
+    return this._currIndex
   }
 
   public close(): void {
@@ -29,21 +36,18 @@ export default class Popup {
     this.nvim.call('coc#compat#execute', [this.winid, cmd], true)
   }
 
+  private async getWininfo(): Promise<WindowInfo> {
+    return await this.nvim.call('coc#float#get_wininfo', [this.winid]) as WindowInfo
+  }
+
   /**
    * Simple scroll method, not consider wrapped lines.
    */
   public async scrollForward(): Promise<void> {
-    let { nvim, bufnr, winid } = this
+    let { nvim, bufnr } = this
     let buf = nvim.createBuffer(bufnr)
     let total = await buf.length
-    let botline: number
-    if (!isVim) {
-      let infos = await nvim.call('getwininfo', [winid])
-      if (!infos || !infos.length) return
-      botline = infos[0].botline
-    } else {
-      botline = await nvim.eval(`get(popup_getpos(${winid}), 'lastline', 0)`) as number
-    }
+    let { botline } = await this.getWininfo()
     if (botline >= total || botline == 0) return
     nvim.pauseNotification()
     this.setCursor(botline - 1)
@@ -51,7 +55,6 @@ export default class Popup {
     this.execute(`normal! ${botline}Gzt`)
     this.refreshScrollbar()
     nvim.command('redraw', true)
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
     nvim.resumeNotification(false, true)
   }
 
@@ -59,37 +62,32 @@ export default class Popup {
    * Simple scroll method, not consider wrapped lines.
    */
   public async scrollBackward(): Promise<void> {
-    let { nvim, winid } = this
-    let topline: number
-    if (!isVim) {
-      let infos = await nvim.call('getwininfo', [winid])
-      if (!infos || !infos.length) return
-      topline = infos[0].topline
-    } else {
-      topline = await nvim.eval(`get(popup_getpos(${winid}), 'firstline', 0)`) as number
-    }
+    let { nvim } = this
+    let { topline } = await this.getWininfo()
     if (topline == 1) return
     nvim.pauseNotification()
     this.setCursor(topline - 1)
     this.execute(`normal! ${topline}Gzb`)
     this.refreshScrollbar()
     nvim.command('redraw', true)
-    // eslint-disable-next-line @typescript-eslint/no-floating-promises
     nvim.resumeNotification(false, true)
   }
 
   /**
    * Move cursor and highlight.
    */
-  public setCursor(index: number): void {
-    let { nvim, bufnr, winid } = this
-    if (isVim) {
-      nvim.call('win_execute', [winid, `exe ${index + 1}`], true)
-    } else {
-      let win = nvim.createWindow(winid)
-      win.notify('nvim_win_set_cursor', [[index + 1, 0]])
-      nvim.command(`sign unplace 6 buffer=${bufnr}`, true)
-      nvim.command(`sign place 6 line=${index + 1} name=CocCurrentLine buffer=${bufnr}`, true)
+  public setCursor(index: number, redraw = false): void {
+    let { nvim, bufnr, winid, linecount } = this
+    if (index < 0) {
+      index = 0
+    } else if (index > linecount - 1) {
+      index = linecount - 1
+    }
+    this._currIndex = index
+    nvim.call('coc#dialog#set_cursor', [winid, bufnr, index + 1], true)
+    if (redraw) {
+      this.refreshScrollbar()
+      nvim.command('redraw', true)
     }
   }
 }

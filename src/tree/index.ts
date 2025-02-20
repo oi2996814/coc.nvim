@@ -1,8 +1,9 @@
-import { Disposable, Event, CancellationToken } from 'vscode-languageserver-protocol'
-import { ProviderResult } from '../provider'
-import { TreeItem, TreeItemIcon, TreeItemCollapsibleState } from './TreeItem'
+'use strict'
+import type { Disposable, Event, CancellationToken } from '../util/protocol'
+import type { ProviderResult } from '../provider'
+import { TreeItem, TreeItemCollapsibleState } from './TreeItem'
 
-export { TreeItem, TreeItemIcon, TreeItemCollapsibleState }
+export { TreeItem, TreeItemCollapsibleState }
 
 export interface TreeItemAction<T> {
   /**
@@ -12,10 +13,46 @@ export interface TreeItemAction<T> {
   handler: (item: T) => ProviderResult<void>
 }
 
+export interface LineState {
+  /**
+   * Line count used by message
+   */
+  messageCount: number
+  /**
+   * Line count used by title
+   */
+  titleCount: number
+}
+
+export interface TreeViewKeys {
+  invoke: string
+  toggle: string
+  actions: string
+  collapseAll: string
+  toggleSelection: string
+  close: string
+  activeFilter: string
+  selectNext: string
+  selectPrevious: string
+}
+
+export interface TreeItemData {
+  item: TreeItem
+  resolved: boolean
+}
+
 /**
  * Options for creating a {@link TreeView}
  */
 export interface TreeViewOptions<T> {
+  /**
+   * bufhidden option for TreeView, default to 'wipe'
+   */
+  bufhidden?: 'hide' | 'unload' | 'delete' | 'wipe'
+  /**
+   * Increase width to avoid wrapped lines.
+   */
+  autoWidth?: boolean
   /**
    * Fixed width for window, default to true
    */
@@ -146,7 +183,7 @@ export interface TreeView<T> extends Disposable {
    *
    * @param splitCommand The command to open TreeView window, default to 'belowright 30vs'
    */
-  show(splitCommand?: string): Promise<void>
+  show(splitCommand?: string): Promise<boolean>
 }
 
 /**
@@ -174,7 +211,7 @@ export interface TreeDataProvider<T> {
    * @param element The element from which the provider gets children. Can be `undefined`.
    * @return Children of `element` or root if no element is passed.
    */
-  getChildren(element?: T): ProviderResult<T[]>
+  getChildren(element?: T): ProviderResult<ReadonlyArray<T>>
 
   /**
    * Optional method to return the parent of `element`.
@@ -217,5 +254,5 @@ export interface TreeDataProvider<T> {
    * @param item Resolved item.
    * @param element The object under cursor.
    */
-  resolveActions?(item: TreeItem, element: T): ProviderResult<TreeItemAction<T>[]>
+  resolveActions?(item: TreeItem, element: T): ProviderResult<ReadonlyArray<TreeItemAction<T>>>
 }

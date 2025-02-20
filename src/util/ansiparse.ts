@@ -1,4 +1,5 @@
-import { byteLength, upperFirst } from './string'
+'use strict'
+import { byteLength, toText, upperFirst } from './string'
 
 export interface AnsiItem {
   foreground?: string
@@ -6,6 +7,7 @@ export interface AnsiItem {
   bold?: boolean
   italic?: boolean
   underline?: boolean
+  strikethrough?: boolean
   text: string
 }
 
@@ -35,7 +37,8 @@ const backgroundColors = {
 const styles = {
   1: 'bold',
   3: 'italic',
-  4: 'underline'
+  4: 'underline',
+  9: 'strikethrough'
 }
 
 export interface AnsiHighlight {
@@ -54,37 +57,40 @@ export function parseAnsiHighlights(line: string, markdown = false): AnsiResult 
   let newLabel = ''
   for (let item of items) {
     if (!item.text) continue
-    let { foreground, background, bold, italic, underline } = item
+    let { foreground, background } = item
     let len = byteLength(newLabel)
-    if (foreground || background || bold || italic || underline) {
-      let span: [number, number] = [len, len + byteLength(item.text)]
-      let hlGroup = ''
-      if (foreground && background) {
-        hlGroup = `CocList${upperFirst(foreground)}${upperFirst(background)}`
-      } else if (foreground) {
-        if (markdown) {
-          if (foreground == 'yellow') {
-            hlGroup = 'CocMarkdownCode'
-          } else if (foreground == 'blue') {
-            hlGroup = 'CocMarkdownLink'
-          } else if (foreground == 'magenta') {
-            hlGroup = 'CocMarkdownHeader'
-          } else {
-            hlGroup = `CocListFg${upperFirst(foreground)}`
-          }
+    let span: [number, number] = [len, len + byteLength(item.text)]
+    if (foreground && background) {
+      let hlGroup = `CocList${upperFirst(foreground)}${upperFirst(background)}`
+      highlights.push({ span, hlGroup })
+    } else if (foreground) {
+      let hlGroup: string
+      if (markdown) {
+        if (foreground == 'yellow') {
+          hlGroup = 'CocMarkdownCode'
+        } else if (foreground == 'blue') {
+          hlGroup = 'CocMarkdownLink'
+        } else if (foreground == 'magenta') {
+          hlGroup = 'CocMarkdownHeader'
         } else {
           hlGroup = `CocListFg${upperFirst(foreground)}`
         }
-      } else if (background) {
-        hlGroup = `CocListBg${upperFirst(background)}`
-      } else if (bold) {
-        hlGroup = 'CocBold'
-      } else if (italic) {
-        hlGroup = 'CocItalic'
-      } else if (underline) {
-        hlGroup = 'CocUnderline'
+      } else {
+        hlGroup = `CocListFg${upperFirst(foreground)}`
       }
       highlights.push({ span, hlGroup })
+    } else if (background) {
+      let hlGroup = `CocListBg${upperFirst(background)}`
+      highlights.push({ span, hlGroup })
+    }
+    if (item.bold) {
+      highlights.push({ span, hlGroup: 'CocBold' })
+    } else if (item.italic) {
+      highlights.push({ span, hlGroup: 'CocItalic' })
+    } else if (item.underline) {
+      highlights.push({ span, hlGroup: 'CocUnderline' })
+    } else if (item.strikethrough) {
+      highlights.push({ span, hlGroup: 'CocStrikeThrough' })
     }
     newLabel = newLabel + item.text
   }
@@ -144,7 +150,7 @@ export function ansiparse(str: string): AnsiItem[] {
     if (matchingControl != null) {
       if (matchingControl == '\x1b' && str[i] == '[') {
         //
-        // We've matched full control code. Lets start matching formating data.
+        // We've matched full control code. Lets start matching formatting data.
         //
 
         //
@@ -197,8 +203,6 @@ export function ansiparse(str: string): AnsiItem[] {
         //
         // Convert matched formatting data into user-friendly state object.
         //
-        // TODO: DRY.
-        //
         ansiState.forEach(ansiCode => {
           if (foregroundColors[ansiCode]) {
             state.foreground = foregroundColors[ansiCode]
@@ -216,6 +220,8 @@ export function ansiparse(str: string): AnsiItem[] {
             state.italic = false
           } else if (ansiCode == 24) {
             state.underline = false
+          } else if (ansiCode == 29) {
+            state.strikethrough = false
           }
         })
         ansiState = []
@@ -236,8 +242,14 @@ export function ansiparse(str: string): AnsiItem[] {
   }
 
   if (matchingText) {
-    state.text = matchingText + (matchingControl ? matchingControl : '')
+    state.text = matchingText + toText(matchingControl)
     result.push(state)
   }
   return result
+}
+
+export function stripAnsiColoring(str?: string): string {
+  // eslint-disable-next-line
+  const ansiColorCodeRegex = /\u001b\[[0-9;]*m/g
+  return str.replace(ansiColorCodeRegex, '')
 }

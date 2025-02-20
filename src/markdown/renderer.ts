@@ -1,27 +1,34 @@
+'use strict'
+import { toObject } from '../util/object'
+import { MarkedOptions } from 'marked'
 /**
  * Renderer for convert markdown to terminal string
  */
-import Table from 'cli-table'
 import * as styles from './styles'
-const logger = require('../util/logger')('markdown-renderer')
 let TABLE_CELL_SPLIT = '^*||*^'
 let TABLE_ROW_WRAP = '*|*|*|*'
 let TABLE_ROW_WRAP_REGEXP = new RegExp(escapeRegExp(TABLE_ROW_WRAP), 'g')
 let COLON_REPLACER = '*#COLON|*'
 let COLON_REPLACER_REGEXP = new RegExp(escapeRegExp(COLON_REPLACER), 'g')
 
-let TAB_ALLOWED_CHARACTERS = ['\t']
-
 // HARD_RETURN holds a character sequence used to indicate text has a
 // hard (no-reflowing) line break.  Previously \r and \r\n were turned
 // into \n in marked's lexer- preprocessing step. So \r is safe to use
 // to indicate a hard (non-reflowed) return.
-let HARD_RETURN = '\r'
+let HARD_RETURN = /\r/g
+
+function identity(str: string): string {
+  return str
+}
+
+function cleanUpHtml(input: string): string {
+  return styles.gray(input.replace(/(<([^>]+)>)/ig, ''))
+}
 
 let defaultOptions = {
   code: identity,
   blockquote: identity,
-  html: styles.gray,
+  html: cleanUpHtml,
   heading: styles.magenta,
   firstHeading: styles.magenta,
   hr: identity,
@@ -39,44 +46,27 @@ let defaultOptions = {
   unescape: true,
   emoji: false,
   width: 80,
-  showSectionPrefix: true,
+  showSectionPrefix: false,
   tab: 2,
   tableOptions: {}
 }
 
-function fixHardReturn(text, reflow) {
-  return reflow ? text.replace(HARD_RETURN, /\n/g) : text
-}
-
-function sanitizeTab(tab, fallbackTab) {
-  if (typeof tab === 'number') {
-    return new Array(tab + 1).join(' ')
-  } else if (typeof tab === 'string' && isAllowedTabString(tab)) {
-    return tab
-  } else {
-    return new Array(fallbackTab + 1).join(' ')
-  }
-}
-
-function isAllowedTabString(str) {
-  return TAB_ALLOWED_CHARACTERS.some(function(char) {
-    return str.match('^(' + char + ')+$')
-  })
+export function fixHardReturn(text, reflow) {
+  return reflow ? text.replace(HARD_RETURN, '\n') : text
 }
 
 function indentLines(indent, text) {
   return text.replace(/(^|\n)(.+)/g, '$1' + indent + '$2')
 }
 
-function indentify(indent, text) {
+export function identify(indent, text) {
   if (!text) return text
   return indent + text.split('\n').join('\n' + indent)
 }
 
 let BULLET_POINT_REGEX = '\\*'
 let NUMBERED_POINT_REGEX = '\\d+\\.'
-let POINT_REGEX =
-  '(?:' + [BULLET_POINT_REGEX, NUMBERED_POINT_REGEX].join('|') + ')'
+let POINT_REGEX = '(?:' + [BULLET_POINT_REGEX, NUMBERED_POINT_REGEX].join('|') + ')'
 
 // Prevents nested lists from joining their parent list's last line
 function fixNestedLists(body, indent) {
@@ -96,16 +86,28 @@ function fixNestedLists(body, indent) {
 }
 
 let isPointedLine = function(line, indent) {
-  return line.match('^(?:' + indent + ')*' + POINT_REGEX)
+  return line.match('^(?:' + indent + ')*' + POINT_REGEX) != null
 }
 
-function toSpaces(str) {
+export function toSpaces(str) {
   return ' '.repeat(str.length)
 }
 
+const SPECIAL_SPACE = '\0\0\0'
+const SPACE = ' '
+export function toSpecialSpaces(str) {
+  return SPECIAL_SPACE.repeat(str.length)
+}
+
 let BULLET_POINT = '* '
-function bulletPointLine(indent, line) {
-  return isPointedLine(line, indent) ? line : toSpaces(BULLET_POINT) + line
+export function bulletPointLine(indent, line) {
+  if (isPointedLine(line, indent)) {
+    return line
+  }
+  if (!line.includes(SPECIAL_SPACE)) {
+    return toSpecialSpaces(BULLET_POINT) + line
+  }
+  return line
 }
 
 function bulletPointLines(lines, indent) {
@@ -120,7 +122,8 @@ function bulletPointLines(lines, indent) {
 let numberedPoint = function(n) {
   return n + '. '
 }
-function numberedLine(indent, line, num) {
+
+export function numberedLine(indent, line, num) {
   return isPointedLine(line, indent)
     ? {
       num: num + 1,
@@ -161,7 +164,7 @@ function undoColon(str) {
   return str.replace(COLON_REPLACER_REGEXP, ':')
 }
 
-function generateTableRow(text, escape = null) {
+export function generateTableRow(text, escape = null) {
   if (!text) return []
   escape = escape || identity
   let lines = escape(text).split('\n')
@@ -192,11 +195,11 @@ function unescapeEntities(html) {
     .replace(/&#39;/g, "'")
 }
 
-function identity(str) {
-  return str
-}
-
 const links: Map<string, string> = new Map()
+
+export interface RendererOptions {
+  sanitize?: boolean
+}
 
 class Renderer {
   private o: any
@@ -205,21 +208,20 @@ class Renderer {
   // private emoji: any
   private unescape: any
   private transform: any
-  constructor(public options: any = {}, public highlightOptions: any = {}) {
+  constructor(public options: RendererOptions = {}, public highlightOptions: any = {}) {
     this.o = Object.assign({}, defaultOptions, options)
-    this.tab = sanitizeTab(this.o.tab, defaultOptions.tab)
+    this.tab = '  '
     this.tableSettings = this.o.tableOptions
     // this.emoji = identity
-    this.unescape = this.o.unescape ? unescapeEntities : identity
-    this.highlightOptions = highlightOptions || {}
+    this.unescape = unescapeEntities
+    this.highlightOptions = toObject(highlightOptions)
     this.transform = this.compose(undoColon, this.unescape)
   }
-
-  // Compute length of str not including ANSI escape codes.
-  // See http://en.wikipedia.org/wiki/ANSI_escape_code#graphics
-  public textLength(str: string): number {
-    // eslint-disable-next-line no-control-regex
-    return str.replace(/\u001b\[(?:\d{1,3})(?:;\d{1,3})*m/g, '').length
+  public static hooks: MarkedOptions['hooks'] = {
+      preprocess: str => str,
+      postprocess: str => {
+        return str.replace(new RegExp(SPECIAL_SPACE, 'g'), SPACE)
+    }
   }
 
   public text(t: string): string {
@@ -231,7 +233,7 @@ class Renderer {
   }
 
   public blockquote(quote: string): string {
-    return section(this.o.blockquote(indentify(this.tab, quote.trim())))
+    return section(this.o.blockquote(identify(this.tab, quote.trim())))
   }
 
   public html(html: string): string {
@@ -240,10 +242,6 @@ class Renderer {
 
   public heading(text: string, level: number, _raw: any): string {
     text = this.transform(text)
-    let prefix = this.o.showSectionPrefix
-      ? new Array(level + 1).join('#') + ' '
-      : ''
-    text = prefix + text
     return section(
       level === 1 ? this.o.firstHeading(text) : this.o.heading(text)
     )
@@ -283,6 +281,7 @@ class Renderer {
   }
 
   public table(header, body): string {
+    const Table = require('cli-table')
     let table = new Table(
       Object.assign(
         {},
@@ -330,17 +329,15 @@ class Renderer {
 
   public link(href, title, text): string {
     let prot: string
-    if (this.options.sanitize) {
-      try {
-        prot = decodeURIComponent(unescape(href))
-          .replace(/[^\w:]/g, '')
-          .toLowerCase()
-      } catch (e) {
-        return ''
-      }
-      if (prot.startsWith('javascript:')) {
-        return ''
-      }
+    try {
+      prot = decodeURIComponent(unescape(href))
+        .replace(/[^\w:]/g, '')
+        .toLowerCase()
+    } catch (e) {
+      return ''
+    }
+    if (prot.startsWith('javascript:')) {
+      return ''
     }
     if (text && href && text != href) {
       links.set(text, href)
@@ -351,12 +348,8 @@ class Renderer {
   }
 
   public image(href, title, text): string {
-    if (typeof this.o.image === 'function') {
-      return this.o.image(href, title, text)
-    }
     let out = '![' + text
-    if (title) out += ' – ' + title
-    return out + '](' + href + ')\n'
+    return out + '](' + href + ')'
   }
 
   public compose(...funcs: Function[]): any {

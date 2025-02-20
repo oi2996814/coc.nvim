@@ -1,38 +1,60 @@
-import { Neovim } from '@chemzqm/neovim'
-import { Disposable } from 'vscode-languageserver-protocol'
+'use strict'
+import { Neovim } from '../neovim'
+import { Disposable } from '../util/protocol'
 import events from '../events'
 import { disposeAll } from '../util'
 import { DialogButton } from './dialog'
-const isVim = process.env.VIM_NODE_RPC == '1'
-const logger = require('../util/logger')('model-notification')
+import { toArray } from '../util/array'
+
+/**
+ * Represents an action that is shown with an information, warning, or
+ * error message.
+ * @see [showInformationMessage](#window.showInformationMessage)
+ * @see [showWarningMessage](#window.showWarningMessage)
+ * @see [showErrorMessage](#window.showErrorMessage)
+ */
+export interface MessageItem {
+
+  /**
+   * A short title like 'Retry', 'Open Log' etc.
+   */
+  title: string
+
+  /**
+   * A hint for modal dialogs that the item should be triggered
+   * when the user cancels the dialog (e.g. by pressing the ESC
+   * key).
+   *
+   * Note: this option is ignored for non-modal messages.
+   * Note: not used by coc.nvim for now.
+   */
+  isCloseAffordance?: boolean
+}
 
 export interface NotificationPreferences {
-  top: number
-  right: number
+  disabled: boolean
   maxWidth: number
   maxHeight: number
   highlight: string
-  minProgressWidth: number
+  winblend: number
+  border: boolean
+  timeout: number
+  marginRight: number
+  focusable: boolean
+  minWidth?: number
+  source?: string
 }
 
+export type NotificationKind = 'error' | 'info' | 'warning' | 'progress'
+
 export interface NotificationConfig {
-  content: string
+  kind?: NotificationKind
+
+  content?: string
   /**
    * Optional title text.
    */
   title?: string
-  /**
-   * Timeout in milliseconds to dismiss notification.
-   */
-  timeout?: number
-  /**
-   * show close button, default to true when not specified.
-   */
-  close?: boolean
-  /**
-   * highlight groups for border, default to `"dialog.borderhighlight"` or 'CocFlating'
-   */
-  borderhighlight?: string
   /**
    * Buttons as bottom of dialog.
    */
@@ -41,13 +63,23 @@ export interface NotificationConfig {
    * index is -1 for window close without button click
    */
   callback?: (index: number) => void
+  closable?: boolean
+}
+
+export function toButtons(texts: string[]): DialogButton[] {
+  return texts.map((s, index) => {
+    return { text: s, index }
+  })
+}
+
+export function toTitles(items: (string | MessageItem)[]): string[] {
+  return items.map(item => typeof item === 'string' ? item : item.title)
 }
 
 export default class Notification {
   protected disposables: Disposable[] = []
-  protected bufnr: number
+  public bufnr: number
   protected _winid: number
-  protected _disposed = false
   constructor(protected nvim: Neovim, protected config: NotificationConfig, attachEvents = true) {
     if (attachEvents) {
       events.on('BufWinLeave', bufnr => {
@@ -56,10 +88,10 @@ export default class Notification {
           if (config.callback) config.callback(-1)
         }
       }, null, this.disposables)
+      let btns = toArray(config.buttons).filter(o => o.disabled != true)
       events.on('FloatBtnClick', (bufnr, idx) => {
         if (bufnr == this.bufnr) {
           this.dispose()
-          let btns = config?.buttons.filter(o => o.disabled != true)
           if (config.callback) config.callback(btns[idx].index)
         }
       }, null, this.disposables)
@@ -67,28 +99,26 @@ export default class Notification {
   }
 
   protected get lines(): string[] {
-    return this.config.content.split(/\r?\n/)
+    return this.config.content ? this.config.content.split(/\r?\n/) : []
   }
 
-  public async show(preferences: Partial<NotificationPreferences>): Promise<any> {
+  public async show(preferences: Partial<NotificationPreferences>): Promise<void> {
     let { nvim } = this
-    let { title, close, timeout, buttons, borderhighlight } = this.config
+    let { buttons, kind, title } = this.config
     let opts: any = Object.assign({}, preferences)
-    opts.close = close ? 1 : 0
+    opts.kind = kind ?? ''
+    opts.close = this.config.closable === true ? 1 : 0
     if (title) opts.title = title
-    if (borderhighlight) opts.borderhighlight = borderhighlight
-    if (buttons) opts.buttons = buttons.filter(o => !o.disabled).map(o => o.text)
-    if (timeout) opts.timeout = timeout
-    let res = await nvim.call('coc#float#create_notification', [this.lines, opts]) as [number, number]
-    if (!res) return false
-    if (this._disposed) {
-      this.nvim.call('coc#float#close', [res[0]], true)
-      if (isVim) this.nvim.command('redraw', true)
-    } else {
-      this._winid = res[0]
-      this.bufnr = res[1]
+    if (preferences.border) {
+      opts.borderhighlight = kind ? `CocNotification${kind[0].toUpperCase()}${kind.slice(1)}` : preferences.highlight
     }
-    return this._winid != undefined
+    if (Array.isArray(buttons)) {
+      let actions: string[] = buttons.filter(o => !o.disabled).map(o => o.text)
+      if (actions.length) opts.actions = actions
+    }
+    let res = await nvim.call('coc#notify#create', [this.lines, opts]) as [number, number]
+    this._winid = res[0]
+    this.bufnr = res[1]
   }
 
   public get winid(): number | undefined {
@@ -96,16 +126,13 @@ export default class Notification {
   }
 
   public dispose(): void {
-    if (this._disposed) return
-    this._disposed = true
     let { winid } = this
     if (winid) {
-      this.nvim.call('coc#float#close', [winid], true)
-      if (isVim) this.nvim.command('redraw', true)
+      this.nvim.call('coc#notify#close', [winid], true)
+      this.nvim.redrawVim()
     }
     this.bufnr = undefined
     this._winid = undefined
     disposeAll(this.disposables)
-    this.disposables = []
   }
 }

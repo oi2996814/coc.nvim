@@ -1,11 +1,12 @@
-import { Neovim } from '@chemzqm/neovim'
-import { Disposable, CallHierarchyItem, SymbolKind, Range, SymbolTag } from 'vscode-languageserver-protocol'
+import { Neovim } from '../../neovim'
+import { Disposable, CallHierarchyItem, SymbolKind, Range, SymbolTag, CancellationToken, Position } from 'vscode-languageserver-protocol'
 import CallHierarchyHandler from '../../handler/callHierarchy'
 import languages from '../../languages'
 import workspace from '../../workspace'
 import { disposeAll } from '../../util'
 import { URI } from 'vscode-uri'
 import helper, { createTmpFile } from '../helper'
+import commands from '../../commands'
 
 let nvim: Neovim
 let callHierarchy: CallHierarchyHandler
@@ -18,10 +19,6 @@ beforeAll(async () => {
 
 afterAll(async () => {
   await helper.shutdown()
-})
-
-beforeEach(async () => {
-  await helper.createDocument()
 })
 
 afterEach(async () => {
@@ -40,17 +37,26 @@ function createCallItem(name: string, kind: SymbolKind, uri: string, range: Rang
 }
 
 describe('CallHierarchy', () => {
-  it('should throw for when provider not exists', async () => {
-    let err
-    try {
+  it('should throw when provider does not exist', async () => {
+    await expect(async () => {
       await callHierarchy.getIncoming()
-    } catch (e) {
-      err = e
-    }
-    expect(err).toBeDefined()
+    }).rejects.toThrow(Error)
   })
 
-  it('should get undefined when prepare failed', async () => {
+  it('should return null when provider not exist', async () => {
+    let token = CancellationToken.None
+    let doc = await workspace.document
+    let res: any
+    res = await languages.prepareCallHierarchy(doc.textDocument, Position.create(0, 0), token)
+    expect(res).toBeNull()
+    let item = createCallItem('name', SymbolKind.Class, doc.uri, Range.create(0, 0, 1, 0))
+    res = await languages.provideOutgoingCalls(doc.textDocument, item, token)
+    expect(res).toBeNull()
+    res = await languages.provideIncomingCalls(doc.textDocument, item, token)
+    expect(res).toBeNull()
+  })
+
+  it('should throw when prepare failed', async () => {
     disposables.push(languages.registerCallHierarchyProvider([{ language: '*' }], {
       prepareCallHierarchy() {
         return undefined
@@ -62,8 +68,10 @@ describe('CallHierarchy', () => {
         return []
       }
     }))
-    let res = await callHierarchy.getOutgoing()
-    expect(res).toBeUndefined()
+    let fn = async () => {
+      await callHierarchy.getOutgoing()
+    }
+    await expect(fn()).rejects.toThrow(Error)
   })
 
   it('should get incoming & outgoing callHierarchy items', async () => {
@@ -84,27 +92,25 @@ describe('CallHierarchy', () => {
         }]
       }
     }))
-    let res = await callHierarchy.getIncoming()
+    let res = await helper.doAction('incomingCalls')
     expect(res.length).toBe(1)
     expect(res[0].from.name).toBe('bar')
-    let outgoing = await callHierarchy.getOutgoing()
+    let outgoing = await helper.doAction('outgoingCalls')
     expect(outgoing.length).toBe(1)
     res = await callHierarchy.getIncoming(outgoing[0].to)
     expect(res.length).toBe(1)
   })
 
-  it('should show message when provider not exists', async () => {
-    await callHierarchy.showCallHierarchyTree('incoming')
-    let buf = await nvim.buffer
-    let lines = await buf.lines
-    expect(lines[0]).toMatch('callHierarchy provider not found')
-    await nvim.command('wincmd p')
+  it('should show warning when provider does not exist', async () => {
+    await helper.doAction('showIncomingCalls')
+    let line = await helper.getCmdline()
+    expect(line).toMatch('not found')
   })
 
-  it('should no results when no result returned.', async () => {
+  it('should show message when no result returned.', async () => {
     disposables.push(languages.registerCallHierarchyProvider([{ language: '*' }], {
       prepareCallHierarchy() {
-        return []
+        return null
       },
       provideCallHierarchyIncomingCalls() {
         return []
@@ -114,13 +120,12 @@ describe('CallHierarchy', () => {
       }
     }))
     await callHierarchy.showCallHierarchyTree('incoming')
-    let buf = await nvim.buffer
-    let lines = await buf.lines
-    expect(lines[0]).toBe('No results')
-    await nvim.command('wincmd p')
+    let line = await helper.getCmdline()
+    expect(line).toMatch('Unable')
   })
 
   it('should render description and support default action', async () => {
+    helper.updateConfiguration('callHierarchy.enableTooltip', false)
     let doc = await workspace.document
     let bufnr = doc.bufnr
     await doc.buffer.setLines(['foo'], { start: 0, end: -1, strictIndexing: false })
@@ -143,7 +148,7 @@ describe('CallHierarchy', () => {
         return []
       }
     }))
-    await callHierarchy.showCallHierarchyTree('incoming')
+    await commands.executeCommand('document.showIncomingCalls')
     let buf = await nvim.buffer
     let lines = await buf.lines
     expect(lines).toEqual([
@@ -153,23 +158,34 @@ describe('CallHierarchy', () => {
     ])
     await nvim.command('exe 3')
     await nvim.input('t')
-    await helper.wait(50)
-    let line = await nvim.line
-    expect(line).toEqual('  - c bar Detail')
+    await helper.waitFor('getline', ['.'], '  - c bar Detail')
     await nvim.input('<cr>')
-    await helper.wait(50)
-    doc = await workspace.document
-    expect(doc.uri).toBe(uri)
+    await helper.waitFor('expand', ['%:p'], fsPath)
     let res = await nvim.call('coc#cursor#position')
     expect(res).toEqual([1, 0])
     let matches = await nvim.call('getmatches') as any[]
     expect(matches.length).toBe(2)
     await nvim.command(`b ${bufnr}`)
     await helper.wait(50)
-    matches = await nvim.call('getmatches')
+    matches = await nvim.call('getmatches') as any[]
     expect(matches.length).toBe(0)
     await nvim.command(`wincmd o`)
-    await helper.wait(50)
+  })
+
+  it('should invoke reveal command', async () => {
+    let doc = await helper.createDocument('foo')
+    await nvim.setLine('foo')
+    let item: any = createCallItem('name', SymbolKind.Class, doc.uri, Range.create(0, 0, 1, 0))
+    let winid = await nvim.call('win_getid') as number
+    let commandId = 'callHierarchy.reveal'
+    await commands.executeCommand(commandId, winid, item)
+    item.ranges = [Range.create(0, 0, 0, 1)]
+    item.sourceUri = 'lsp:/1'
+    await commands.executeCommand(commandId, winid, item)
+    let newDoc = await helper.createDocument('bar')
+    await workspace.jumpTo(doc.uri)
+    item.sourceUri = newDoc.uri
+    await commands.executeCommand(commandId, winid, item)
   })
 
   it('should invoke open in new tab action', async () => {
@@ -194,8 +210,7 @@ describe('CallHierarchy', () => {
       }
     }))
     let win = await nvim.window
-    let tab = await nvim.call('tabpagenr')
-    await callHierarchy.showCallHierarchyTree('outgoing')
+    await commands.executeCommand('document.showOutgoingCalls')
     let buf = await nvim.buffer
     let lines = await buf.lines
     expect(lines).toEqual([
@@ -205,15 +220,15 @@ describe('CallHierarchy', () => {
     ])
     await nvim.command('exe 3')
     await nvim.input('<tab>')
-    await helper.wait(50)
+    await helper.waitPrompt()
     await nvim.input('<cr>')
-    await helper.wait(200)
-    let newTab = await nvim.call('tabpagenr')
-    expect(newTab != tab).toBe(true)
+    await helper.waitFor('tabpagenr', [], 2)
     doc = await workspace.document
     expect(doc.uri).toBe(uri)
-    let res = await nvim.call('getmatches', [win.id])
-    expect(res.length).toBe(1)
+    await helper.waitValue(async () => {
+      let res = await nvim.call('getmatches', [win.id]) as any[]
+      return res.length
+    }, 1)
   })
 
   it('should invoke show incoming calls action', async () => {
@@ -250,8 +265,8 @@ describe('CallHierarchy', () => {
     ])
     await nvim.command('exe 3')
     await nvim.input('<tab>')
-    await helper.wait(50)
-    await nvim.input('2')
+    await helper.waitPrompt()
+    await nvim.input('3')
     await helper.wait(200)
     lines = await buf.lines
     expect(lines).toEqual([
@@ -259,7 +274,6 @@ describe('CallHierarchy', () => {
       '- c bar Detail',
       '  + c test'
     ])
-    await nvim.command('bd!')
   })
 
   it('should invoke show outgoing calls action', async () => {
@@ -296,8 +310,8 @@ describe('CallHierarchy', () => {
     ])
     await nvim.command('exe 3')
     await nvim.input('<tab>')
-    await helper.wait(50)
-    await nvim.input('3')
+    await helper.waitPrompt()
+    await nvim.input('4')
     await helper.wait(200)
     lines = await buf.lines
     expect(lines).toEqual([
@@ -305,7 +319,6 @@ describe('CallHierarchy', () => {
       '- c test',
       '  + c bar Detail'
     ])
-    await nvim.command('bd!')
   })
 
   it('should invoke dismiss action #1', async () => {
@@ -339,15 +352,19 @@ describe('CallHierarchy', () => {
     ])
     await nvim.command('exe 3')
     await nvim.input('<tab>')
-    await helper.wait(50)
-    await nvim.input('4')
+    await helper.waitPrompt()
+    await nvim.input('2')
     await helper.wait(200)
     lines = await buf.lines
     expect(lines).toEqual([
       'OUTGOING CALLS',
       '- c foo'
     ])
-    await nvim.command('wincmd c')
+    await nvim.command('exe 2')
+    await nvim.input('<tab>')
+    await helper.waitPrompt()
+    await nvim.input('2')
+    await helper.wait(30)
   })
 
   it('should invoke dismiss action #2', async () => {
@@ -371,7 +388,7 @@ describe('CallHierarchy', () => {
         }]
       }
     }))
-    await callHierarchy.showCallHierarchyTree('outgoing')
+    await helper.doAction('showOutgoingCalls')
     let buf = await nvim.buffer
     let lines = await buf.lines
     expect(lines).toEqual([
@@ -381,18 +398,17 @@ describe('CallHierarchy', () => {
     ])
     await nvim.command('exe 3')
     await nvim.input('t')
-    await helper.wait(50)
+    await helper.waitFor('line', ['$'], 4)
     await nvim.command('exe 4')
     await nvim.input('<tab>')
-    await helper.wait(50)
-    await nvim.input('4')
-    await helper.wait(200)
+    await helper.waitPrompt()
+    await nvim.input('2')
+    await helper.waitFor('line', ['$'], 3)
     lines = await buf.lines
     expect(lines).toEqual([
       'OUTGOING CALLS',
       '- c foo',
       '  - c bar Detail'
     ])
-    await nvim.command('wincmd c')
   })
 })

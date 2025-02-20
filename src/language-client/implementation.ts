@@ -1,20 +1,10 @@
-/* ---------------------------------------------------------------------------------------------
- *  Copyright (c) Microsoft Corporation. All rights reserved.
- *  Licensed under the MIT License. See License.txt in the project root for license information.
- *--------------------------------------------------------------------------------------------*/
-import { CancellationToken, ClientCapabilities, Definition, DefinitionLink, Disposable, DocumentSelector, ImplementationOptions, ImplementationRegistrationOptions, ImplementationRequest, Position, ServerCapabilities } from 'vscode-languageserver-protocol'
+'use strict'
+import type { CancellationToken, ClientCapabilities, Definition, DefinitionLink, Disposable, DocumentSelector, ImplementationOptions, ImplementationRegistrationOptions, Position, ServerCapabilities } from 'vscode-languageserver-protocol'
 import { TextDocument } from 'vscode-languageserver-textdocument'
 import languages from '../languages'
 import { ImplementationProvider, ProviderResult } from '../provider'
-import { BaseLanguageClient, TextDocumentFeature } from './client'
-import * as cv from './utils/converter'
-
-function ensure<T, K extends keyof T>(target: T, key: K): T[K] {
-  if (target[key] === void 0) {
-    target[key] = {} as any
-  }
-  return target[key]
-}
+import { ImplementationRequest } from '../util/protocol'
+import { ensure, FeatureClient, TextDocumentLanguageFeature } from './features'
 
 export interface ProvideImplementationSignature {
   (this: void, document: TextDocument, position: Position, token: CancellationToken): ProviderResult<Definition | DefinitionLink[]>
@@ -24,16 +14,16 @@ export interface ImplementationMiddleware {
   provideImplementation?: (this: void, document: TextDocument, position: Position, token: CancellationToken, next: ProvideImplementationSignature) => ProviderResult<Definition | DefinitionLink[]>
 }
 
-export class ImplementationFeature extends TextDocumentFeature<boolean | ImplementationOptions, ImplementationRegistrationOptions, ImplementationProvider> {
+export class ImplementationFeature extends TextDocumentLanguageFeature<boolean | ImplementationOptions, ImplementationRegistrationOptions, ImplementationProvider, ImplementationMiddleware> {
 
-  constructor(client: BaseLanguageClient) {
+  constructor(client: FeatureClient<ImplementationMiddleware>) {
     super(client, ImplementationRequest.type)
   }
 
   public fillClientCapabilities(capabilities: ClientCapabilities): void {
     const implementationSupport = ensure(ensure(capabilities, 'textDocument')!, 'implementation')!
     implementationSupport.dynamicRegistration = true
-    // implementationSupport.linkSupport = true
+    implementationSupport.linkSupport = true
   }
 
   public initialize(capabilities: ServerCapabilities, documentSelector: DocumentSelector): void {
@@ -48,12 +38,9 @@ export class ImplementationFeature extends TextDocumentFeature<boolean | Impleme
     const provider: ImplementationProvider = {
       provideImplementation: (document, position, token) => {
         const client = this._client
-        const provideImplementation: ProvideImplementationSignature = (document, position, token) => client.sendRequest(ImplementationRequest.type, cv.asTextDocumentPositionParams(document, position), token).then(
-          res => res, error => {
-            return client.handleFailedRequest(ImplementationRequest.type, token, error, null)
-          }
-        )
-        const middleware = client.clientOptions.middleware
+        const provideImplementation: ProvideImplementationSignature = (document, position, token) =>
+          this.sendRequest(ImplementationRequest.type, client.code2ProtocolConverter.asTextDocumentPositionParams(document, position), token)
+        const middleware = client.middleware
         return middleware.provideImplementation
           ? middleware.provideImplementation(document, position, token, provideImplementation)
           : provideImplementation(document, position, token)

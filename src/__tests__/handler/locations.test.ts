@@ -1,5 +1,5 @@
-import { Neovim } from '@chemzqm/neovim'
-import { Disposable, LocationLink, Location, Range } from 'vscode-languageserver-protocol'
+import { Neovim } from '../../neovim'
+import { Disposable, LocationLink, Location, Range, Position, CancellationTokenSource, CancellationToken } from 'vscode-languageserver-protocol'
 import LocationHandler from '../../handler/locations'
 import languages from '../../languages'
 import services from '../../services'
@@ -11,7 +11,7 @@ import { URI } from 'vscode-uri'
 let nvim: Neovim
 let locations: LocationHandler
 let disposables: Disposable[] = []
-let currLocations: Location[]
+let currLocations: Location[] | LocationLink[]
 beforeAll(async () => {
   await helper.setup()
   nvim = helper.nvim
@@ -38,25 +38,45 @@ function createLocation(name: string, sl: number, sc: number, el: number, ec: nu
   return Location.create(`test://${name}`, Range.create(sl, sc, el, ec))
 }
 
+function createLocationLink(name: string, sl: number, sc: number, el: number, ec: number): LocationLink {
+  let r = Range.create(sl, sc, el, ec)
+  return LocationLink.create(`test://${name}`, r, r)
+}
+
 describe('locations', () => {
+  describe('no provider', () => {
+    it('should return null when provider does not exist', async () => {
+      let doc = (await workspace.document).textDocument
+      let pos = Position.create(0, 0)
+      let tokenSource = new CancellationTokenSource()
+      let token = tokenSource.token
+      expect(await languages.getDefinition(doc, pos, token)).toEqual([])
+      expect(await languages.getDefinitionLinks(doc, pos, token)).toEqual([])
+      expect(await languages.getDeclaration(doc, pos, token)).toEqual([])
+      expect(await languages.getTypeDefinition(doc, pos, token)).toEqual([])
+      expect(await languages.getImplementation(doc, pos, token)).toEqual([])
+      expect(await languages.getReferences(doc, { includeDeclaration: false }, pos, token)).toEqual([])
+    })
+  })
+
   describe('reference', () => {
     beforeEach(() => {
       disposables.push(languages.registerReferencesProvider([{ language: '*' }], {
         provideReferences: () => {
-          return currLocations
+          return currLocations as any
         }
       }))
     })
 
     it('should get references', async () => {
-      currLocations = [createLocation('foo', 0, 0, 0, 0), createLocation('bar', 0, 0, 0, 0)]
-      let res = await locations.references()
+      currLocations = [createLocationLink('foo', 0, 0, 0, 0), createLocationLink('bar', 0, 0, 0, 0)]
+      let res = await helper.doAction('references')
       expect(res.length).toBe(2)
     })
 
     it('should jump to references', async () => {
       currLocations = [createLocation('foo', 0, 0, 0, 0)]
-      let res = await locations.gotoReferences('edit', true)
+      let res = await helper.doAction('jumpReferences', 'edit')
       expect(res).toBe(true)
       let name = await nvim.call('bufname', ['%'])
       expect(name).toBe('test://foo')
@@ -65,6 +85,8 @@ describe('locations', () => {
     it('should return false when references not found', async () => {
       currLocations = []
       let res = await locations.gotoReferences('edit', true)
+      expect(res).toBe(false)
+      res = await helper.doAction('jumpUsed', 'edit')
       expect(res).toBe(false)
     })
   })
@@ -80,13 +102,43 @@ describe('locations', () => {
 
     it('should get definitions', async () => {
       currLocations = [createLocation('foo', 0, 0, 0, 0), createLocation('bar', 0, 0, 0, 0)]
-      let res = await locations.definitions()
+      disposables.push(languages.registerDefinitionProvider([{ language: '*' }], {
+        provideDefinition: () => {
+          return [createLocation('foo', 0, 0, 0, 0)]
+        }
+      }))
+      disposables.push(languages.registerDefinitionProvider([{ language: '*' }], {
+        provideDefinition: () => {
+          return createLocation('foo', 0, 0, 0, 0)
+        }
+      }))
+      disposables.push(languages.registerDefinitionProvider([{ language: '*' }], {
+        provideDefinition: () => {
+          return [LocationLink.create(`test://foo`, Range.create(0, 0, 0, 0), Range.create(0, 0, 0, 0)), null]
+        }
+      }))
+      disposables.push(languages.registerDefinitionProvider([{ language: '*' }], {
+        provideDefinition: () => {
+          return [LocationLink.create(`test://foo`, Range.create(0, 0, 0, 0), Range.create(0, 0, 0, 0))]
+        }
+      }))
+      let res = await helper.doAction('definitions')
       expect(res.length).toBe(2)
+    })
+
+    it('should return empty locations when no definitions exist', async () => {
+      currLocations = null
+      let doc = await workspace.document
+      let res = await languages.getDefinitionLinks(doc.textDocument, Position.create(0, 0), CancellationToken.None)
+      expect(res.length).toBe(0)
+      currLocations = [createLocation('foo', 0, 0, 0, 0)]
+      res = await languages.getDefinitionLinks(doc.textDocument, Position.create(0, 0), CancellationToken.None)
+      expect(res.length).toBe(0)
     })
 
     it('should jump to definitions', async () => {
       currLocations = [createLocation('foo', 0, 0, 0, 0)]
-      let res = await locations.gotoDefinition('edit')
+      let res = await helper.doAction('jumpDefinition', 'edit')
       expect(res).toBe(true)
       let name = await nvim.call('bufname', ['%'])
       expect(name).toBe('test://foo')
@@ -124,7 +176,7 @@ describe('locations', () => {
 
     it('should return false when declaration not found', async () => {
       currLocations = []
-      let res = await locations.gotoDeclaration('edit')
+      let res = await helper.doAction('jumpDeclaration', 'edit')
       expect(res).toBe(false)
     })
   })
@@ -140,7 +192,7 @@ describe('locations', () => {
 
     it('should get type definition', async () => {
       currLocations = [createLocation('foo', 0, 0, 0, 0), createLocation('bar', 0, 0, 0, 0)]
-      let res = await locations.typeDefinitions() as Location[]
+      let res = await helper.doAction('typeDefinitions')
       expect(res.length).toBe(2)
     })
 
@@ -154,7 +206,7 @@ describe('locations', () => {
 
     it('should return false when type definition not found', async () => {
       currLocations = []
-      let res = await locations.gotoTypeDefinition('edit')
+      let res = await helper.doAction('jumpTypeDefinition', 'edit')
       expect(res).toBe(false)
     })
   })
@@ -170,13 +222,13 @@ describe('locations', () => {
 
     it('should get implementations', async () => {
       currLocations = [createLocation('foo', 0, 0, 0, 0), createLocation('bar', 0, 0, 0, 0)]
-      let res = await locations.implementations() as Location[]
+      let res = await helper.doAction('implementations')
       expect(res.length).toBe(2)
     })
 
     it('should jump to implementation', async () => {
       currLocations = [createLocation('foo', 0, 0, 0, 0)]
-      let res = await locations.gotoImplementation('edit')
+      let res = await helper.doAction('jumpImplementation', 'edit')
       expect(res).toBe(true)
       let name = await nvim.call('bufname', ['%'])
       expect(name).toBe('test://foo')
@@ -190,12 +242,12 @@ describe('locations', () => {
   })
 
   describe('getTagList', () => {
-    it('should return null when cword not exists', async () => {
-      let res = await locations.getTagList()
+    it('should return null when cword does not exist', async () => {
+      let res = await helper.doAction('getTagList')
       expect(res).toBe(null)
     })
 
-    it('should return null when provider not exists', async () => {
+    it('should return null when provider does not exist', async () => {
       await nvim.setLine('foo')
       await nvim.command('normal! ^')
       let res = await locations.getTagList()
@@ -226,10 +278,10 @@ describe('locations', () => {
       expect(res).toEqual([
         {
           name: 'foo',
-          cmd: 'keepjumps 3 | normal 1|',
+          cmd: 'silent keepjumps call coc#cursor#move_to(2, 0)',
           filename: 'test://bar'
         },
-        { name: 'foo', cmd: 'keepjumps 2 | normal 1|', filename: '/foo' }
+        { name: 'foo', cmd: 'silent keepjumps call coc#cursor#move_to(1, 0)', filename: '/foo' }
       ])
     })
   })
@@ -251,7 +303,7 @@ describe('locations', () => {
 
     it('should handle locations from language client', async () => {
       result = [createLocation('bar', 2, 0, 2, 5)]
-      await locations.findLocations('foo', 'mylocation', {}, false)
+      await helper.doAction('findLocations', 'foo', 'mylocation', {}, false)
       let res = await nvim.getVar('coc_jump_locations')
       expect(res).toEqual([{
         uri: 'test://bar',
@@ -263,6 +315,12 @@ describe('locations', () => {
         text: '',
         range: Range.create(2, 0, 2, 5)
       }])
+    })
+
+    it('should handle empty result', async () => {
+      result = null
+      let res = await locations.findLocations('foo', 'mylocation', undefined, 'edit')
+      expect(res).toBe(false)
     })
 
     it('should handle nested locations', async () => {
@@ -277,32 +335,42 @@ describe('locations', () => {
         }]
       }
       result = location
-      await locations.findLocations('foo', 'mylocation', {}, false)
+      await locations.findLocations('foo', 'mylocation', {})
       let res = await nvim.getVar('coc_jump_locations') as any[]
       expect(res.length).toBe(3)
     })
   })
 
+  describe('toLocations()', () => {
+    it('should convert to locations', async () => {
+      let loc = createLocation('file', 0, 0, 0, 0)
+      expect(locations.toLocations(loc).length).toBe(1)
+      expect(locations.toLocations([loc]).length).toBe(1)
+      let link = LocationLink.create(`test://a`, Range.create(0, 0, 1, 0), Range.create(0, 0, 0, 1))
+      expect(locations.toLocations(link).length).toBe(1)
+      expect(locations.toLocations([link]).length).toBe(1)
+      expect(locations.toLocations(null).length).toBe(0)
+      expect(locations.toLocations(undefined).length).toBe(0)
+      let location: any = {
+        location: createLocation('file', 0, 0, 0, 0),
+        children: [{
+          location: link,
+          children: [{
+            location: loc
+          }, null, undefined, {}]
+        }]
+      }
+      expect(locations.toLocations(location).length).toBe(3)
+    })
+  })
+
   describe('handleLocations', () => {
-    it('should not throw when location is undefined', async () => {
-      await locations.handleLocations(null)
+    it('should not throw when locations is undefined', async () => {
+      await locations.handleLocations(undefined)
     })
 
     it('should not throw when locations is empty array', async () => {
       await locations.handleLocations([])
-    })
-
-    it('should handle single location', async () => {
-      await locations.handleLocations(createLocation('single', 0, 0, 0, 0))
-      let bufname = await nvim.call('bufname', ['%'])
-      expect(bufname).toBe('test://single')
-    })
-
-    it('should handle location link', async () => {
-      let link = LocationLink.create('test://link', Range.create(0, 0, 0, 3), Range.create(1, 0, 1, 3))
-      await locations.handleLocations([link])
-      let bufname = await nvim.call('bufname', ['%'])
-      expect(bufname).toBe('test://link')
     })
   })
 })

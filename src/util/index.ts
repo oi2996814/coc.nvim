@@ -1,134 +1,83 @@
-import { exec, ExecOptions } from 'child_process'
-import debounce from 'debounce'
-import fs from 'fs'
-import isuri from 'isuri'
-import path from 'path'
-import { Disposable, MarkupContent, MarkupKind } from 'vscode-languageserver-protocol'
-import { URI } from 'vscode-uri'
-import which from 'which'
-import * as platform from './platform'
-export { platform }
-const logger = require('./logger')('util-index')
+'use strict'
+import type { CancellationToken } from 'vscode-languageserver-protocol'
 
-export type MapMode = 'n' | 'i' | 'v' | 'x' | 's' | 'o'
-
-export const CONFIG_FILE_NAME = 'coc-settings.json'
-
-export function isMarkdown(content: MarkupContent | string | undefined): boolean {
-  if (MarkupContent.is(content) && content.kind == MarkupKind.Markdown) {
-    return true
-  }
-  return false
+export interface Disposable {
+  dispose(): void
 }
 
-export function escapeSingleQuote(str: string): string {
-  return str.replace(/'/g, "''")
+export function getConditionValue<T>(value: T, testValue: T): T {
+  return global.__TEST__ ? testValue : value
 }
 
-export function wait(ms: number): Promise<any> {
+export const pariedCharacters: Map<string, string> = new Map([
+  ['<', '>'],
+  ['>', '<'],
+  ['{', '}'],
+  ['[', ']'],
+  ['(', ')'],
+])
+
+export function defaultValue<T>(val: T | undefined | null, defaultValue: T): T {
+  return val == null ? defaultValue : val
+}
+
+export function wait(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve(undefined)
   return new Promise(resolve => {
-    setTimeout(() => {
+    let timer = setTimeout(() => {
       resolve(undefined)
     }, ms)
+    timer.unref()
   })
 }
 
-export function waitNextTick(fn: () => void): Promise<void> {
+export function waitWithToken(ms: number, token: CancellationToken): Promise<boolean> {
+  return new Promise<boolean>(resolve => {
+    let disposable = token.onCancellationRequested(() => {
+      clearTimeout(timer)
+      resolve(true)
+    })
+    let timer = setTimeout(() => {
+      disposable.dispose()
+      resolve(false)
+    }, ms)
+    timer.unref()
+  })
+}
+
+export function waitNextTick(): Promise<void> {
   return new Promise(resolve => {
     process.nextTick(() => {
-      fn()
       resolve(undefined)
     })
   })
 }
 
-export function getUri(fullpath: string, id: number, buftype: string, isCygwin: boolean): string {
-  if (!fullpath) return `untitled:${id}`
-  // https://github.com/neoclide/coc-java/issues/82
-  if (platform.isWindows && !isCygwin && !fullpath.startsWith('jdt://')) fullpath = path.win32.normalize(fullpath)
-  if (path.isAbsolute(fullpath)) return URI.file(fullpath).toString()
-  if (isuri.isValid(fullpath)) return URI.parse(fullpath).toString()
-  if (buftype != '') return `${buftype}:${id}`
-  return `unknown:${id}`
-}
-
-export function disposeAll(disposables: Disposable[]): void {
-  while (disposables.length) {
-    const item = disposables.pop()
-    if (item) {
-      item.dispose()
-    }
-  }
-}
-
-export function executable(command: string): boolean {
-  try {
-    which.sync(command)
-  } catch (e) {
-    return false
-  }
-  return true
-}
-
-export function runCommand(cmd: string, opts: ExecOptions = {}, timeout?: number): Promise<string> {
-  if (!platform.isWindows) {
-    opts.shell = opts.shell || process.env.SHELL
-  }
-  opts.maxBuffer = 500 * 1024
-  return new Promise<string>((resolve, reject) => {
-    let timer: NodeJS.Timer
-    if (timeout) {
-      timer = setTimeout(() => {
-        reject(new Error(`timeout after ${timeout}s`))
-      }, timeout * 1000)
-    }
-    exec(cmd, opts, (err, stdout, stderr) => {
-      if (timer) clearTimeout(timer)
-      if (err) {
-        reject(new Error(`exited with ${err.code}\n${err}\n${stderr}`))
-        return
-      }
-      resolve(stdout)
+export function waitImmediate(): Promise<void> {
+  return new Promise(resolve => {
+    setImmediate(() => {
+      resolve(undefined)
     })
   })
 }
 
-export function watchFile(filepath: string, onChange: () => void): Disposable {
-  let callback = debounce(onChange, 100)
-  try {
-    let watcher = fs.watch(filepath, {
-      persistent: true,
-      recursive: false,
-      encoding: 'utf8'
-    }, () => {
-      callback()
-    })
-    return Disposable.create(() => {
-      callback.clear()
-      watcher.close()
-    })
-  } catch (e) {
-    return Disposable.create(() => {
-      callback.clear()
-    })
+export function delay(func: () => void, defaultDelay: number): ((ms?: number) => void) & { clear: () => void } {
+  let timer: NodeJS.Timeout
+  let fn = (ms?: number) => {
+    if (timer) clearTimeout(timer)
+    timer = setTimeout(() => {
+      func()
+    }, ms ?? defaultDelay)
+    timer.unref()
   }
-}
-
-export function isRunning(pid: number): boolean {
-  try {
-    let res: any = process.kill(pid, 0)
-    return res == true
-  }
-  catch (e) {
-    return e.code === 'EPERM'
-  }
-}
-
-export function getKeymapModifier(mode: MapMode): string {
-  if (mode == 'n' || mode == 'o' || mode == 'x' || mode == 'v') return '<C-U>'
-  if (mode == 'i') return '<C-o>'
-  if (mode == 's') return '<Esc>'
-  return ''
+  Object.defineProperty(fn, 'clear', {
+    get: () => {
+      return () => {
+        clearTimeout(timer)
+      }
+    }
+  })
+  return fn as any
 }
 
 export function concurrent<T>(arr: T[], fn: (val: T) => Promise<void>, limit = 3): Promise<void> {
@@ -154,4 +103,11 @@ export function concurrent<T>(arr: T[], fn: (val: T) => Promise<void>, limit = 3
       run(val)
     }
   })
+}
+
+export function disposeAll(disposables: Disposable[]): void {
+  while (disposables.length) {
+    const item = disposables.pop()
+    item?.dispose()
+  }
 }

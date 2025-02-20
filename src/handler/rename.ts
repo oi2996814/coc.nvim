@@ -1,11 +1,12 @@
-import { Neovim } from '@chemzqm/neovim'
-import { CancellationTokenSource, Range, WorkspaceEdit } from 'vscode-languageserver-protocol'
-import languages from '../languages'
-import { HandlerDelegate } from '../types'
+'use strict'
+import { Neovim } from '../neovim'
+import { Range, WorkspaceEdit } from 'vscode-languageserver-types'
+import languages, { ProviderName } from '../languages'
 import { emptyRange } from '../util/position'
+import { CancellationTokenSource } from '../util/protocol'
 import window from '../window'
 import workspace from '../workspace'
-const logger = require('../util/logger')('handler-rename')
+import { HandlerDelegate } from './types'
 
 export default class Rename {
   constructor(
@@ -18,15 +19,17 @@ export default class Rename {
     let range = doc.getWordRangeAtPosition(position)
     if (!range || emptyRange(range)) return null
     let curname = doc.textDocument.getText(range)
-    if (languages.hasProvider('rename', doc.textDocument)) {
+    if (languages.hasProvider(ProviderName.Rename, doc.textDocument)) {
       await doc.synchronize()
       let requestTokenSource = new CancellationTokenSource()
       let res = await languages.prepareRename(doc.textDocument, position, requestTokenSource.token)
-      if (res === false) return null
-      let edit = await languages.provideRenameEdits(doc.textDocument, position, curname, requestTokenSource.token)
-      if (edit) return edit
+      if (res !== false) {
+        let newName = curname.startsWith('a') ? 'b' : 'a'
+        let edit = await languages.provideRenameEdits(doc.textDocument, position, newName, requestTokenSource.token)
+        if (edit) return edit
+      }
     }
-    window.showMessage('Rename provider not found, extract word ranges from current buffer', 'more')
+    void window.showInformationMessage('Rename provider not found, extract word ranges from current buffer')
     let ranges = doc.getSymbolRanges(curname)
     return {
       changes: {
@@ -37,12 +40,12 @@ export default class Rename {
 
   public async rename(newName?: string): Promise<boolean> {
     let { doc, position } = await this.handler.getCurrentState()
-    this.handler.checkProvier('rename', doc.textDocument)
+    this.handler.checkProvider(ProviderName.Rename, doc.textDocument)
     await doc.synchronize()
     let token = (new CancellationTokenSource()).token
     let res = await languages.prepareRename(doc.textDocument, position, token)
     if (res === false) {
-      window.showMessage('Invalid position for rename', 'warning')
+      void window.showWarningMessage('Invalid position for rename')
       return false
     }
     let curname: string
@@ -55,13 +58,15 @@ export default class Rename {
       } else {
         curname = await this.nvim.eval('expand("<cword>")') as string
       }
-      newName = await window.requestInput('New name', curname)
+      const config = workspace.getConfiguration('coc.preferences', null)
+      newName = await window.requestInput('New name', config.get<boolean>('renameFillCurrent', true) ? curname : '')
     }
+    if (newName === '') void window.showWarningMessage('Empty word, rename canceled')
     if (!newName) return false
     let edit = await languages.provideRenameEdits(doc.textDocument, position, newName, token)
     if (token.isCancellationRequested || !edit) return false
     await workspace.applyEdit(edit)
-    if (workspace.isVim) this.nvim.command('redraw', true)
+    this.nvim.redrawVim()
     return true
   }
 }

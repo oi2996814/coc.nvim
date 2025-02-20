@@ -1,18 +1,19 @@
-import { Neovim } from '@chemzqm/neovim'
-import debounce from 'debounce'
-import { CodeActionKind, Disposable, DocumentSymbol, Range, SymbolKind, SymbolTag } from 'vscode-languageserver-protocol'
+'use strict'
+import { Neovim } from '../../neovim'
+import { CodeActionKind, DocumentSymbol, Position, Range, SymbolKind, SymbolTag } from 'vscode-languageserver-types'
+import type { IConfigurationChangeEvent } from '../../configuration/types'
 import events from '../../events'
-import languages from '../../languages'
+import languages, { ProviderName } from '../../languages'
 import BufferSync from '../../model/bufferSync'
 import BasicDataProvider, { TreeNode } from '../../tree/BasicDataProvider'
 import BasicTreeView from '../../tree/TreeView'
-import { ConfigurationChangeEvent, HandlerDelegate } from '../../types'
-import { disposeAll } from '../../util'
+import { disposeAll, getConditionValue } from '../../util'
 import { comparePosition, positionInRange } from '../../util/position'
+import type { Disposable } from '../../util/protocol'
 import window from '../../window'
 import workspace from '../../workspace'
+import { HandlerDelegate } from '../types'
 import SymbolsBuffer from './buffer'
-const logger = require('../../util/logger')('symbols-outline')
 
 // Support expand level.
 interface OutlineNode extends TreeNode {
@@ -23,22 +24,36 @@ interface OutlineNode extends TreeNode {
 
 interface OutlineConfig {
   splitCommand: string
+  switchSortKey: string
+  togglePreviewKey: string
   followCursor: boolean
   keepWindow: boolean
   expandLevel: number
   checkBufferSwitch: boolean
   showLineNumber: boolean
+  autoWidth: boolean
+  detailAsDescription: boolean
   codeActionKinds: CodeActionKind[]
   sortBy: 'position' | 'name' | 'category'
+  autoHide: boolean
+  autoPreview: boolean
+  previewMaxWidth: number
+  previewBorder: boolean
+  previewBorderRounded: boolean
+  previewHighlightGroup: string
+  previewBorderHighlightGroup: string
+  previewWinblend: number
 }
+
+const hoverTimeout = getConditionValue(300, 10)
 
 /**
  * Manage TreeViews and Providers of outline.
  */
 export default class SymbolsOutline {
+  private treeViewList: BasicTreeView<OutlineNode>[] = []
   private providersMap: Map<number, BasicDataProvider<OutlineNode>> = new Map()
-  private treeViews: WeakMap<BasicDataProvider<OutlineNode>, BasicTreeView<OutlineNode>[]> = new WeakMap()
-  private originalWins: WeakMap<BasicTreeView<OutlineNode>, number> = new WeakMap()
+  private sortByMap: Map<number, string> = new Map()
   private config: OutlineConfig
   private disposables: Disposable[] = []
   constructor(
@@ -48,102 +63,79 @@ export default class SymbolsOutline {
   ) {
     this.loadConfiguration()
     workspace.onDidChangeConfiguration(this.loadConfiguration, this, this.disposables)
-    events.on('BufUnload', async bufnr => {
+    workspace.onDidCloseTextDocument(async e => {
+      let { bufnr } = e
       let provider = this.providersMap.get(bufnr)
       if (!provider) return
+      let loaded = await nvim.call('bufloaded', [bufnr]) as number
+      // reload detected
+      if (loaded) return
       this.providersMap.delete(bufnr)
       provider.dispose()
-      let views = this.treeViews.get(provider)
-      this.treeViews.delete(provider)
-      for (let view of views) {
-        if (!view.visible) continue
-        let winid = this.originalWins.get(view)
-        if (winid && this.config.checkBufferSwitch) {
-          // check if original window exists
-          let nr = await nvim.call('win_id2win', [winid])
-          if (nr) {
-            let win = nvim.createWindow(view.windowId)
-            // buffer could be recreated.
-            win.setVar('target_bufnr', -1, true)
-            let timer = setTimeout(() => {
-              if (view.visible) view.dispose()
-            }, 200)
-            this.disposables.push({
-              dispose: () => {
-                clearTimeout(timer)
-              }
-            })
-            continue
-          }
-        }
-        view.dispose()
+    }, null, this.disposables)
+    window.onDidChangeActiveTextEditor(async editor => {
+      if (!this.config.checkBufferSwitch) return
+      let view = this.treeViewList.find(v => v.visible && v.targetTabId == editor.tabpageid)
+      if (view) {
+        await this.showOutline(editor.document.bufnr, editor.tabpageid)
+        await nvim.command(`noa call win_gotoid(${editor.winid})`)
       }
     }, null, this.disposables)
-    events.on('BufEnter', debounce(() => {
-      void this._onBufEnter()
-    }, global.hasOwnProperty('__TEST__') ? 100 : 300), null, this.disposables)
-    events.on('CursorHold', async bufnr => {
+    events.on('CursorHold', async (bufnr: number, cursor: [number, number]) => {
       if (!this.config.followCursor) return
       let provider = this.providersMap.get(bufnr)
       if (!provider) return
-      let views = this.treeViews.get(provider)
-      if (!views || !views.length) return
-      let winid = await this.nvim.call('coc#window#find', ['cocViewId', 'OUTLINE'])
-      if (winid == -1) return
-      let view = views.find(o => o.windowId == winid)
+      let tabpage = await nvim.tabpage
+      let view = this.treeViewList.find(o => o.visible && o.targetBufnr == bufnr && o.targetTabId == tabpage.id)
       if (!view) return
-      let pos = await window.getCursorPosition()
-      let curr: OutlineNode
-      let checkNode = (node: OutlineNode): boolean => {
-        if (positionInRange(pos, node.range) != 0) return false
-        curr = node
-        if (Array.isArray(node.children)) {
-          for (let n of node.children) {
-            if (checkNode(n)) break
-          }
-        }
-        return true
-      }
-      let nodes = await Promise.resolve(provider.getChildren())
-      for (let n of nodes) {
-        if (checkNode(n)) break
-      }
-      if (curr) await view.reveal(curr)
+      await this.revealPosition(bufnr, view, Position.create(cursor[0] - 1, cursor[1] - 1))
     }, null, this.disposables)
   }
 
-  private async _onBufEnter(): Promise<void> {
-    if (!this.config.checkBufferSwitch) return
-    let [curr, bufnr, winid] = await this.nvim.eval(`[win_getid(),bufnr('%'),coc#window#find('cocViewId', 'OUTLINE')]`) as [number, number, number]
-    if (curr == winid || winid == -1) return
-    if (!this.buffers.getItem(bufnr)) return
-    let win = this.nvim.createWindow(winid)
-    let target = await win.getVar('target_bufnr')
-    if (target == bufnr) return
-    await this.show(1)
+  private async revealPosition(bufnr: number, treeView: BasicTreeView<OutlineNode>, position: Position): Promise<void> {
+    let provider = this.providersMap.get(bufnr)
+    let nodes = await Promise.resolve(provider.getChildren())
+    let curr = getNodeByPosition(position, nodes)
+    if (curr) await treeView.reveal(curr)
   }
 
-  private loadConfiguration(e?: ConfigurationChangeEvent): void {
+  private loadConfiguration(e?: IConfigurationChangeEvent): void {
     if (!e || e.affectsConfiguration('outline')) {
-      let c = workspace.getConfiguration('outline')
+      let c = workspace.getConfiguration('outline', null)
       this.config = {
         splitCommand: c.get<string>('splitCommand'),
+        switchSortKey: c.get<string>('switchSortKey'),
+        togglePreviewKey: c.get<string>('togglePreviewKey'),
         followCursor: c.get<boolean>('followCursor'),
         keepWindow: c.get<boolean>('keepWindow'),
         expandLevel: c.get<number>('expandLevel'),
+        autoWidth: c.get<boolean>('autoWidth'),
         checkBufferSwitch: c.get<boolean>('checkBufferSwitch'),
+        detailAsDescription: c.get<boolean>('detailAsDescription'),
         sortBy: c.get<'position' | 'name' | 'category'>('sortBy'),
         showLineNumber: c.get<boolean>('showLineNumber'),
-        codeActionKinds: c.get<string[]>('codeActionKinds')
+        codeActionKinds: c.get<string[]>('codeActionKinds'),
+        autoHide: c.get<boolean>('autoHide'),
+        autoPreview: c.get<boolean>('autoPreview'),
+        previewMaxWidth: c.get<number>('previewMaxWidth'),
+        previewBorder: c.get<boolean>('previewBorder'),
+        previewBorderRounded: c.get<boolean>('previewBorderRounded'),
+        previewHighlightGroup: c.get<string>('previewHighlightGroup'),
+        previewBorderHighlightGroup: c.get<string>('previewBorderHighlightGroup'),
+        previewWinblend: c.get<number>('previewWinblend'),
       }
     }
   }
 
   private convertSymbolToNode(documentSymbol: DocumentSymbol, sortFn: (a: OutlineNode, b: OutlineNode) => number): OutlineNode {
+    let descs = []
+    let { detailAsDescription, showLineNumber } = this.config
+    if (detailAsDescription && documentSymbol.detail) descs.push(documentSymbol.detail)
+    if (showLineNumber) descs.push(`${documentSymbol.selectionRange.start.line + 1}`)
     return {
       label: documentSymbol.name,
-      tooltip: documentSymbol.detail,
-      description: this.config.showLineNumber ? `${documentSymbol.selectionRange.start.line + 1}` : undefined,
+      tooltip: detailAsDescription ? undefined : documentSymbol.detail,
+      description: descs.join(' '),
       icon: this.handler.getIcon(documentSymbol.kind),
       deprecated: documentSymbol.tags?.includes(SymbolTag.Deprecated),
       kind: documentSymbol.kind,
@@ -155,19 +147,16 @@ export default class SymbolsOutline {
     }
   }
 
-  private setMessage(provider: BasicDataProvider<OutlineNode>, msg: string | undefined): void {
-    let views = this.treeViews.get(provider)
-    if (views) {
-      views.forEach(view => {
-        view.message = msg
-      })
-    }
+  private setMessage(bufnr: number, msg: string | undefined): void {
+    this.treeViewList.forEach(v => {
+      if (v.valid && v.targetBufnr == bufnr) {
+        v.message = msg
+      }
+    })
   }
 
-  private createProvider(buf: SymbolsBuffer): BasicDataProvider<OutlineNode> {
-    let { bufnr } = buf
-    let { sortBy } = this.config
-    let { nvim } = this
+  private convertSymbols(bufnr: number, symbols: DocumentSymbol[]): OutlineNode[] {
+    let sortBy = this.getSortBy(bufnr)
     let sortFn = (a: OutlineNode, b: OutlineNode): number => {
       if (sortBy === 'name') {
         return a.label < b.label ? -1 : 1
@@ -178,28 +167,38 @@ export default class SymbolsOutline {
       }
       return comparePosition(a.selectRange.start, b.selectRange.start)
     }
-    let convertSymbols = (symbols: DocumentSymbol[]): OutlineNode[] => {
-      return symbols.map(s => this.convertSymbolToNode(s, sortFn)).sort(sortFn)
-    }
-    let disposable: Disposable
+    return symbols.map(s => this.convertSymbolToNode(s, sortFn)).sort(sortFn)
+  }
+
+  public onSymbolsUpdate(bufnr: number, symbols: DocumentSymbol[]): void {
+    let provider = this.providersMap.get(bufnr)
+    if (provider) provider.update(this.convertSymbols(bufnr, symbols))
+  }
+
+  private createProvider(bufnr: number): BasicDataProvider<OutlineNode> {
+    let { nvim } = this
     let provider = new BasicDataProvider({
       expandLevel: this.config.expandLevel,
       provideData: async () => {
+        let buf = this.buffers.getItem(bufnr)
+        if (!buf) throw new Error('Document not attached')
         let doc = workspace.getDocument(bufnr)
-        if (!languages.hasProvider('documentSymbol', doc.textDocument)) {
+        if (!languages.hasProvider(ProviderName.DocumentSymbol, doc.textDocument)) {
           throw new Error('Document symbol provider not found')
         }
-        this.setMessage(provider, 'Loading document symbols')
+        let meta = languages.getDocumentSymbolMetadata(doc.textDocument)
+        if (meta && meta.label) {
+          let views = this.treeViewList.filter(v => v.valid && v.targetBufnr == bufnr)
+          views.forEach(view => view.description = meta.label)
+        }
+        this.setMessage(bufnr, 'Loading document symbols')
         let arr = await buf.getSymbols()
         if (!arr || arr.length == 0) {
           // server may return empty symbols on buffer initialize, throw error to force reload.
           throw new Error('Empty symbols returned from language server. ')
         }
-        disposable = buf.onDidUpdate(symbols => {
-          provider.update(convertSymbols(symbols))
-        })
-        this.setMessage(provider, undefined)
-        return convertSymbols(arr)
+        this.setMessage(bufnr, undefined)
+        return this.convertSymbols(bufnr, arr)
       },
       handleClick: async item => {
         let winnr = await nvim.call('bufwinnr', [bufnr])
@@ -216,7 +215,10 @@ export default class SymbolsOutline {
         setTimeout(() => {
           buf.clearNamespace('outline-hover')
           nvim.command('redraw', true)
-        }, global.hasOwnProperty('__TEST__') ? 10 : 300)
+        }, hoverTimeout)
+        if (this.config.autoHide) {
+          await this.hide()
+        }
       },
       resolveActions: async (_, element) => {
         let winnr = await nvim.call('bufwinnr', [bufnr])
@@ -238,58 +240,144 @@ export default class SymbolsOutline {
           title: 'Visual Select',
           handler: async item => {
             await nvim.command(`${winnr}wincmd w`)
-            await workspace.selectRange(item.range)
+            await window.selectRange(item.range)
           }
         }]
       },
       onDispose: () => {
-        this.providersMap.delete(buf.bufnr)
-        if (disposable) disposable.dispose()
+        for (let view of this.treeViewList.slice()) {
+          if (view.provider === provider) {
+            view.dispose()
+          }
+        }
       }
     })
     return provider
+  }
+
+  private getSortBy(bufnr: number): string {
+    return this.sortByMap.get(bufnr) ?? this.config.sortBy
+  }
+
+  private async showOutline(bufnr: number, tabId: number): Promise<BasicTreeView<OutlineNode>> {
+    if (!this.providersMap.has(bufnr)) {
+      this.providersMap.set(bufnr, this.createProvider(bufnr))
+    }
+    let treeView = this.treeViewList.find(v => v.valid && v.targetBufnr == bufnr && v.targetTabId == tabId)
+    if (!treeView) {
+      let { switchSortKey, togglePreviewKey } = this.config
+      let autoPreview = this.config.autoPreview
+      let previewBufnr: number | undefined
+      treeView = new BasicTreeView('OUTLINE', {
+        autoWidth: this.config.autoWidth,
+        bufhidden: 'hide',
+        enableFilter: true,
+        treeDataProvider: this.providersMap.get(bufnr),
+      })
+      let sortBy = this.getSortBy(bufnr)
+      let prev: OutlineNode | undefined
+      treeView.description = `${sortBy[0].toUpperCase()}${sortBy.slice(1)}`
+      this.treeViewList.push(treeView)
+      let disposable = events.on('BufEnter', bufnr => {
+        if (previewBufnr && bufnr !== previewBufnr) {
+          prev = undefined
+          this.closePreview()
+        }
+      })
+      treeView.onDispose(() => {
+        let idx = this.treeViewList.findIndex(v => v === treeView)
+        if (idx !== -1) this.treeViewList.splice(idx, 1)
+        disposable.dispose()
+        this.closePreview()
+      })
+      treeView.onDidChangeVisibility(visible => {
+        if (this.nvim.isVim && visible && previewBufnr) {
+          prev = undefined
+          this.closePreview()
+        }
+      })
+      treeView.onDidCursorMoved(async node => {
+        if (autoPreview && prev !== node) {
+          prev = node
+          previewBufnr = await this.doPreview(bufnr, node)
+        }
+      })
+      treeView.registerLocalKeymap('n', switchSortKey, async () => {
+        let arr = ['category', 'name', 'position']
+        let curr = this.getSortBy(bufnr)
+        let items = arr.map(s => {
+          return { text: s, disabled: s === curr }
+        })
+        let res = await window.showMenuPicker(items, { title: 'Choose sort method' })
+        if (res < 0) return
+        let sortBy = arr[res]
+        this.sortByMap.set(bufnr, sortBy)
+        let views = this.treeViewList.filter(o => o.targetBufnr == bufnr)
+        views.forEach(view => {
+          view.description = `${sortBy[0].toUpperCase()}${sortBy.slice(1)}`
+        })
+        let item = this.buffers.getItem(bufnr)
+        this.onSymbolsUpdate(bufnr, item.symbols)
+      }, true)
+      treeView.registerLocalKeymap('n', togglePreviewKey, async node => {
+        autoPreview = !autoPreview
+        if (!autoPreview) {
+          prev = undefined
+          this.closePreview()
+        } else {
+          previewBufnr = await this.doPreview(bufnr, node)
+        }
+      }, true)
+    }
+    await treeView.show(this.config.splitCommand, false)
+    return treeView
+  }
+
+  public async doPreview(bufnr: number, node: OutlineNode | undefined): Promise<undefined | number> {
+    if (!node) {
+      this.closePreview()
+      return
+    }
+    let config: any = {
+      bufnr,
+      range: node.range,
+      border: this.config.previewBorder,
+      rounded: this.config.previewBorderRounded,
+      maxWidth: this.config.previewMaxWidth,
+      highlight: this.config.previewHighlightGroup,
+      borderhighlight: this.config.previewBorderHighlightGroup,
+      winblend: this.config.previewWinblend
+    }
+    return await this.nvim.call('coc#ui#outline_preview', [config]) as number
+  }
+
+  private closePreview(): void {
+    this.nvim.call('coc#ui#outline_close_preview', [], true)
   }
 
   /**
    * Create outline view.
    */
   public async show(keep?: number): Promise<void> {
-    await workspace.document
     let [bufnr, winid] = await this.nvim.eval('[bufnr("%"),win_getid()]') as [number, number]
-    let buf = this.buffers.getItem(bufnr)
-    if (!buf) throw new Error('Document not attached')
-    let provider = this.providersMap.get(bufnr)
-    if (!provider) {
-      provider = this.createProvider(buf)
-      this.providersMap.set(bufnr, provider)
+    let tabpage = await this.nvim.tabpage
+    let doc = workspace.getDocument(bufnr)
+    if (doc && !doc.attached) {
+      void window.showErrorMessage(`Unable to show outline, ${doc.notAttachReason}`)
+      return
     }
-    let treeView = new BasicTreeView('OUTLINE', {
-      enableFilter: true,
-      treeDataProvider: provider,
-    })
-    this.originalWins.set(treeView, winid)
-    let arr = this.treeViews.get(provider) || []
-    arr.push(treeView)
-    this.treeViews.set(provider, arr)
-    treeView.onDidChangeVisibility(({ visible }) => {
-      if (visible || !this.treeViews.has(provider)) return
-      let arr = this.treeViews.get(provider) || []
-      arr = arr.filter(s => s !== treeView)
-      this.originalWins.delete(treeView)
-      if (arr.length) {
-        this.treeViews.set(provider, arr)
-        return
-      }
-      provider.dispose()
-      this.treeViews.delete(provider)
-    })
-    await treeView.show(this.config.splitCommand)
-    if (treeView.windowId) {
-      let win = this.nvim.createWindow(treeView.windowId)
-      win.setVar('target_bufnr', bufnr, true)
-    }
+    let position = await window.getCursorPosition()
+    let treeView = await this.showOutline(bufnr, tabpage.id)
     if (keep == 1 || (keep === undefined && this.config.keepWindow)) {
-      await this.nvim.command('wincmd p')
+      await this.nvim.command(`noa call win_gotoid(${winid})`)
+    } else if (this.config.followCursor) {
+      let disposable = treeView.onDidRefrash(async () => {
+        disposable.dispose()
+        let curr = await this.nvim.eval('bufnr("%")')
+        if (curr == bufnr && treeView.visible) {
+          await this.revealPosition(bufnr, treeView, position)
+        }
+      })
     }
   }
 
@@ -307,13 +395,31 @@ export default class SymbolsOutline {
   }
 
   public dispose(): void {
+    for (let view of this.treeViewList) {
+      view.dispose()
+    }
+    this.treeViewList = []
     for (let provider of this.providersMap.values()) {
       provider.dispose()
-      for (let view of this.treeViews.get(provider)) {
-        view.dispose()
-      }
     }
     this.providersMap.clear()
     disposeAll(this.disposables)
   }
+}
+
+function getNodeByPosition(position: Position, nodes: ReadonlyArray<OutlineNode>): OutlineNode | undefined {
+  let curr: OutlineNode | undefined
+  let checkNodes = (nodes: ReadonlyArray<OutlineNode>): void => {
+    for (let node of nodes) {
+      if (positionInRange(position, node.range) == 0) {
+        curr = node
+        if (Array.isArray(node.children)) {
+          checkNodes(node.children)
+        }
+        break
+      }
+    }
+  }
+  checkNodes(nodes)
+  return curr
 }

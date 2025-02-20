@@ -1,20 +1,18 @@
-import { CancellationToken, Disposable, DocumentHighlight, DocumentSelector, Position } from 'vscode-languageserver-protocol'
-import { TextDocument } from 'vscode-languageserver-textdocument'
-import { DocumentHighlightProvider } from './index'
-import Manager, { ProviderItem } from './manager'
+'use strict'
 import { v4 as uuid } from 'uuid'
+import { TextDocument } from 'vscode-languageserver-textdocument'
+import { DocumentHighlight, Position } from 'vscode-languageserver-types'
+import { CancellationToken, Disposable } from '../util/protocol'
+import { DocumentHighlightProvider, DocumentSelector } from './index'
+import Manager from './manager'
 
 export default class DocumentHighlightManager extends Manager<DocumentHighlightProvider> {
 
   public register(selector: DocumentSelector, provider: DocumentHighlightProvider): Disposable {
-    let item: ProviderItem<DocumentHighlightProvider> = {
+    return this.addProvider({
       id: uuid(),
       selector,
       provider
-    }
-    this.providers.add(item)
-    return Disposable.create(() => {
-      this.providers.delete(item)
     })
   }
 
@@ -23,9 +21,16 @@ export default class DocumentHighlightManager extends Manager<DocumentHighlightP
     position: Position,
     token: CancellationToken
   ): Promise<DocumentHighlight[]> {
-    let item = this.getProvider(document)
-    if (!item) return null
-    let { provider } = item
-    return await Promise.resolve(provider.provideDocumentHighlights(document, position, token))
+    let items = this.getProviders(document)
+    let res: DocumentHighlight[] = null
+    for (const item of items) {
+      try {
+        res = await Promise.resolve(item.provider.provideDocumentHighlights(document, position, token))
+        if (res != null) break
+      } catch (e) {
+        this.handleResults([{ status: 'rejected', reason: e }], 'provideDocumentHighlights')
+      }
+    }
+    return res
   }
 }

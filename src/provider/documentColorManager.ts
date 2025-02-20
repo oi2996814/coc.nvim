@@ -1,37 +1,53 @@
-import { CancellationToken, ColorInformation, ColorPresentation, Disposable, DocumentSelector } from 'vscode-languageserver-protocol'
-import { TextDocument } from 'vscode-languageserver-textdocument'
-import { DocumentColorProvider } from './index'
-import Manager, { ProviderItem } from './manager'
+'use strict'
 import { v4 as uuid } from 'uuid'
+import { TextDocument } from 'vscode-languageserver-textdocument'
+import { ColorInformation, ColorPresentation } from 'vscode-languageserver-types'
+import { equals } from '../util/object'
+import { CancellationToken, Disposable } from '../util/protocol'
+import { DocumentColorProvider, DocumentSelector } from './index'
+import Manager from './manager'
+
+interface ColorWithSource extends ColorInformation {
+  source?: string
+}
 
 export default class DocumentColorManager extends Manager<DocumentColorProvider> {
 
   public register(selector: DocumentSelector, provider: DocumentColorProvider): Disposable {
-    let item: ProviderItem<DocumentColorProvider> = {
+    return this.addProvider({
       id: uuid(),
       selector,
       provider
-    }
-    this.providers.add(item)
-    return Disposable.create(() => {
-      this.providers.delete(item)
     })
   }
 
-  public async provideDocumentColors(document: TextDocument, token: CancellationToken): Promise<ColorInformation[] | null> {
-    let item = this.getProvider(document)
-    if (!item) return null
-    let { provider } = item
-    let res: ColorInformation[] = await Promise.resolve(provider.provideDocumentColors(document, token))
-    return res
+  public async provideDocumentColors(document: TextDocument, token: CancellationToken): Promise<ColorInformation[]> {
+    let items = this.getProviders(document)
+    let colors: ColorWithSource[] = []
+    const results = await Promise.allSettled(items.map(item => {
+      let { id } = item
+      return Promise.resolve(item.provider.provideDocumentColors(document, token)).then(arr => {
+        let noCheck = colors.length == 0
+        if (Array.isArray(arr)) {
+          for (let color of arr) {
+            if (noCheck || !colors.some(o => equals(o.range, color.range))) {
+              colors.push(Object.assign({ source: id }, color))
+            }
+          }
+        }
+      })
+    }))
+    this.handleResults(results, 'provideDocumentColors')
+    return colors
   }
 
-  public async provideColorPresentations(colorInformation: ColorInformation, document: TextDocument, token: CancellationToken): Promise<ColorPresentation[]> {
+  public async provideColorPresentations(colorInformation: ColorWithSource, document: TextDocument, token: CancellationToken): Promise<ColorPresentation[] | null> {
+    let providers = this.getProviders(document)
     let { range, color } = colorInformation
-    let item = this.getProvider(document)
-    if (!item) return null
-    let { provider } = item
-    let res = await Promise.resolve(provider.provideColorPresentations(color, { document, range }, token))
-    return res
+    for (let item of providers) {
+      let res = await Promise.resolve(item.provider.provideColorPresentations(color, { document, range }, token))
+      if (res) return res
+    }
+    return null
   }
 }

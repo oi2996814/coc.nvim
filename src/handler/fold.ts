@@ -1,16 +1,16 @@
-import { Neovim } from '@chemzqm/neovim'
-import { CancellationTokenSource, Range, WorkspaceEdit } from 'vscode-languageserver-protocol'
-import languages from '../languages'
-import { HandlerDelegate } from '../types'
-import workspace from '../workspace'
+'use strict'
+import { Neovim } from '../neovim'
+import type { FoldingRangeKind } from 'vscode-languageserver-types'
+import languages, { ProviderName } from '../languages'
+import { HandlerDelegate } from './types'
 
 export default class FoldHandler {
   constructor(private nvim: Neovim, private handler: HandlerDelegate) {
   }
 
-  public async fold(kind?: string | 'comment' | 'region'): Promise<boolean> {
+  public async fold(kind?: FoldingRangeKind): Promise<boolean> {
     let { doc, winid } = await this.handler.getCurrentState()
-    this.handler.checkProvier('foldingRange', doc.textDocument)
+    this.handler.checkProvider(ProviderName.FoldingRange, doc.textDocument)
     await doc.synchronize()
     let win = this.nvim.createWindow(winid)
     let foldlevel = await this.nvim.eval('&foldlevel') as number
@@ -30,8 +30,7 @@ export default class FoldHandler {
     }
     win.setOption('foldenable', true, true)
     win.setOption('foldlevel', foldlevel, true)
-    if (workspace.isVim) this.nvim.command('redraw', true)
-    await this.nvim.resumeNotification()
+    await this.nvim.resumeNotification(true)
     return true
   }
 }

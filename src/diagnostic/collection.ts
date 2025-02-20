@@ -1,7 +1,10 @@
-import { Diagnostic, Emitter, Event, Range } from 'vscode-languageserver-protocol'
+'use strict'
+import { Diagnostic, DiagnosticSeverity, DiagnosticTag, Range } from 'vscode-languageserver-types'
 import { URI } from 'vscode-uri'
+import { intersect } from '../util/array'
+import { Emitter, Event } from '../util/protocol'
 import workspace from '../workspace'
-const logger = require('../util/logger')('diagnostic-collection')
+const HintTags = [DiagnosticTag.Deprecated, DiagnosticTag.Unnecessary]
 
 export default class DiagnosticCollection {
   private diagnosticsMap: Map<string, Diagnostic[]> = new Map()
@@ -40,9 +43,12 @@ export default class DiagnosticCollection {
       uri = URI.parse(uri).toString()
       diagnostics.forEach(o => {
         // should be message for the file, but we need range
-        o.range = o.range || Range.create(0, 0, 0, 0)
-        o.message = o.message || ''
+        o.range = o.range ?? Range.create(0, 0, 0, 0)
+        o.message = o.message ?? ''
         o.source = o.source || this.name
+        if (!o.severity && Array.isArray(o.tags) && intersect(o.tags, HintTags)) {
+          o.severity = DiagnosticSeverity.Hint
+        }
       })
       this.diagnosticsMap.set(uri, diagnostics)
       this._onDidDiagnosticsChange.fire(uri)
@@ -55,7 +61,8 @@ export default class DiagnosticCollection {
   }
 
   public clear(): void {
-    let uris = this.diagnosticsMap.keys()
+    let uris = Array.from(this.diagnosticsMap.keys())
+    uris = uris.filter(uri => this.diagnosticsMap.get(uri).length > 0)
     this.diagnosticsMap.clear()
     for (let uri of uris) {
       this._onDidDiagnosticsChange.fire(uri)
@@ -69,9 +76,13 @@ export default class DiagnosticCollection {
     }
   }
 
+  public entries(): IterableIterator<[string, Diagnostic[]]> {
+    return this.diagnosticsMap.entries()
+  }
+
   public get(uri: string): Diagnostic[] {
     let arr = this.diagnosticsMap.get(uri)
-    return arr == null ? [] : arr
+    return arr == null ? [] : arr.slice()
   }
 
   public has(uri: string): boolean {

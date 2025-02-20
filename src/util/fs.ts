@@ -1,32 +1,99 @@
-import { exec } from 'child_process'
-import fs from 'fs-extra'
-import net from 'net'
-import os from 'os'
-import path from 'path'
-import readline from 'readline'
-import util from 'util'
-import minimatch from 'minimatch'
-const logger = require('./logger')('util-fs')
+'use strict'
+import type { Stats } from 'fs'
+import { parse, ParseError } from 'jsonc-parser'
+import { Location, Position, Range } from 'vscode-languageserver-types'
+import { URI } from 'vscode-uri'
+import { createLogger } from '../logger'
+import { fs, path, promisify } from '../util/node'
+import { CancellationToken, Disposable } from '../util/protocol'
+import { isFalsyOrEmpty, toArray } from './array'
+import { CancellationError } from './errors'
+import { child_process, debounce, glob, minimatch, readline } from './node'
+import { toObject } from './object'
+import * as platform from './platform'
+const logger = createLogger('util-fs')
+const exec = child_process.exec
+
+export enum FileType {
+  /**
+   * The file type is unknown.
+   */
+  Unknown = 0,
+  /**
+   * A regular file.
+   */
+  File = 1,
+  /**
+   * A directory.
+   */
+  Directory = 2,
+  /**
+   * A symbolic link to a file.
+   */
+  SymbolicLink = 64
+}
 
 export type OnReadLine = (line: string) => void
 
-export async function statAsync(filepath: string): Promise<fs.Stats | null> {
+export function watchFile(filepath: string, onChange: () => void, immediate = false): Disposable {
+  let callback = debounce(onChange, 100)
+  try {
+    let watcher = fs.watch(filepath, {
+      persistent: true,
+      recursive: false,
+      encoding: 'utf8'
+    }, () => {
+      callback()
+    })
+    if (immediate) {
+      setTimeout(onChange, 10)
+    }
+    return Disposable.create(() => {
+      callback.clear()
+      watcher.close()
+    })
+  } catch (e) {
+    return Disposable.create(() => {
+      callback.clear()
+    })
+  }
+}
+
+export function loadJson(filepath: string): object {
+  try {
+    let errors: ParseError[] = []
+    let text = fs.readFileSync(filepath, 'utf8')
+    let data = parse(text, errors, { allowTrailingComma: true })
+    if (errors.length > 0) {
+      logger.error(`Error on parse json file ${filepath}`, errors)
+    }
+    return data ?? {}
+  } catch (e) {
+    return {}
+  }
+}
+
+export function writeJson(filepath: string, obj: any): void {
+  let dir = path.dirname(filepath)
+  if (!fs.existsSync(dir)) {
+    fs.mkdirSync(dir, { recursive: true })
+    logger.info(`Creating directory ${dir}`)
+  }
+  fs.writeFileSync(filepath, JSON.stringify(toObject(obj), null, 2), 'utf8')
+}
+
+export async function statAsync(filepath: string): Promise<Stats | null> {
   let stat = null
   try {
-    stat = await fs.stat(filepath)
-  } catch (e) { }
+    stat = await promisify(fs.stat)(filepath)
+  } catch (e) {}
   return stat
 }
 
-export async function isDirectory(filepath: string): Promise<boolean> {
-  let stat = await statAsync(filepath)
-  return stat && stat.isDirectory()
-}
-
-export async function unlinkAsync(filepath: string): Promise<void> {
-  try {
-    await fs.unlink(filepath)
-  } catch (e) { }
+export function isDirectory(filepath: string | undefined): boolean {
+  if (!filepath || !path.isAbsolute(filepath) || !fs.existsSync(filepath)) return false
+  let stat = fs.statSync(filepath)
+  return stat.isDirectory()
 }
 
 export function renameAsync(oldPath: string, newPath: string): Promise<void> {
@@ -38,48 +105,79 @@ export function renameAsync(oldPath: string, newPath: string): Promise<void> {
   })
 }
 
-export async function isGitIgnored(fullpath: string): Promise<boolean> {
+export async function remove(filepath: string | undefined): Promise<void> {
+  if (!filepath) return
+  try {
+    await promisify(fs.rm)(filepath, { force: true, recursive: true })
+  } catch (e) {
+    return
+  }
+}
+
+export async function getFileType(filepath: string): Promise<FileType | undefined> {
+  try {
+    const stat = await promisify(fs.lstat)(filepath)
+    if (stat.isFile()) {
+      return FileType.File
+    }
+    if (stat.isDirectory()) {
+      return FileType.Directory
+    }
+    if (stat.isSymbolicLink()) {
+      return FileType.SymbolicLink
+    }
+    return FileType.Unknown
+  } catch (e) {
+    return undefined
+  }
+}
+
+export async function isGitIgnored(fullpath: string | undefined): Promise<boolean> {
   if (!fullpath) return false
   let stat = await statAsync(fullpath)
   if (!stat || !stat.isFile()) return false
   let root = null
   try {
-    let { stdout } = await util.promisify(exec)('git rev-parse --show-toplevel', { cwd: path.dirname(fullpath) })
+    let { stdout } = await promisify(exec)('git rev-parse --show-toplevel', { cwd: path.dirname(fullpath) })
     root = stdout.trim()
-  } catch (e) { }
+  } catch (e) {}
   if (!root) return false
   let file = path.relative(root, fullpath)
   try {
-    let { stdout } = await util.promisify(exec)(`git check-ignore ${file}`, { cwd: root })
+    let { stdout } = await promisify(exec)(`git check-ignore ${file}`, { cwd: root })
     return stdout.trim() == file
-  } catch (e) { }
+  } catch (e) {}
   return false
 }
 
-export function resolveRoot(folder: string, subs: string[], cwd?: string, bottomup = false, checkCwd = true): string | null {
-  let home = os.homedir()
-  let dir = fixDriver(folder)
-  if (isParentFolder(dir, home, true)) return null
-  if (checkCwd && cwd && isParentFolder(cwd, dir, true) && inDirectory(cwd, subs)) return cwd
+export function isFolderIgnored(folder: string, ignored: string[] | undefined): boolean {
+  if (isFalsyOrEmpty(ignored)) return false
+  return ignored.some(p => sameFile(p, folder) || minimatch(folder, p, { dot: true }))
+}
+
+export function resolveRoot(folder: string, subs: ReadonlyArray<string>, cwd?: string, bottomup = false, checkCwd = true, ignored: string[] = []): string | null {
+  let dir = normalizeFilePath(folder)
+  if (checkCwd
+    && cwd
+    && isParentFolder(cwd, dir, true)
+    && !isFolderIgnored(cwd, ignored)
+    && inDirectory(cwd, subs)) return cwd
   let parts = dir.split(path.sep)
   if (bottomup) {
     while (parts.length > 0) {
       let dir = parts.join(path.sep)
-      if (dir == home) {
-          break
-      }
-      if (dir != home && inDirectory(dir, subs)) {
+      if (!isFolderIgnored(dir, ignored) && inDirectory(dir, subs)) {
         return dir
       }
       parts.pop()
     }
-  return null
+    return null
   } else {
     let curr: string[] = [parts.shift()]
     for (let part of parts) {
       curr.push(part)
       let dir = curr.join(path.sep)
-      if (dir != home && inDirectory(dir, subs)) {
+      if (!isFolderIgnored(dir, ignored) && inDirectory(dir, subs)) {
         return dir
       }
     }
@@ -87,7 +185,42 @@ export function resolveRoot(folder: string, subs: string[], cwd?: string, bottom
   }
 }
 
-export function inDirectory(dir: string, subs: string[]): boolean {
+export function checkFolder(dir: string, patterns: string[], token?: CancellationToken): Promise<boolean> {
+  return new Promise(async (resolve, reject) => {
+    if (isFalsyOrEmpty(patterns)) return resolve(false)
+    let disposable: Disposable | undefined
+    const ac = new AbortController()
+    if (token) {
+      disposable = token.onCancellationRequested(() => {
+        ac.abort()
+        reject(new CancellationError())
+      })
+    }
+
+    let find = false
+    let pattern = patterns.length == 1 ? patterns[0] : `{${patterns.join(',')}}`
+    let gl = new glob.Glob(pattern, {
+      nosort: true,
+      signal: ac.signal,
+      ignore: ['node_modules/**', '.git/**'],
+      dot: true,
+      cwd: dir,
+      nodir: true,
+      absolute: false
+    })
+    try {
+      for await (const _file of gl) {
+        find = true
+        break
+      }
+    } catch (e) {
+      logger.error(`Error on glob "${pattern}"`, dir, e)
+    }
+    resolve(find)
+  })
+}
+
+export function inDirectory(dir: string, subs: ReadonlyArray<string>): boolean {
   try {
     let files = fs.readdirSync(dir)
     for (let pattern of subs) {
@@ -104,25 +237,41 @@ export function inDirectory(dir: string, subs: string[]): boolean {
   return false
 }
 
-export function findUp(name: string | string[], cwd: string): string {
-  let root = path.parse(cwd).root
-  let subs = Array.isArray(name) ? name : [name]
-  while (cwd && cwd !== root) {
-    let find = inDirectory(cwd, subs)
-    if (find) {
-      for (let sub of subs) {
-        let filepath = path.join(cwd, sub)
-        if (fs.existsSync(filepath)) {
-          return filepath
-        }
+/**
+ * Find a matched file inside directory.
+ */
+export function findMatch(dir: string, subs: string[]): string | undefined {
+  try {
+    let files = fs.readdirSync(dir)
+    for (let pattern of subs) {
+      // note, only '*' expanded
+      let isWildcard = (pattern.includes('*'))
+      if (isWildcard) {
+        let filtered = files.filter(minimatch.filter(pattern, { nobrace: true, noext: true, nocomment: true, nonegate: true, dot: true }))
+        if (filtered.length > 0) return filtered[0]
+      } else {
+        let file = files.find(s => s === pattern)
+        if (file) return file
       }
     }
+  } catch (e) {
+    // could be failed without permission
+  }
+  return undefined
+}
+
+export function findUp(name: string | string[], cwd: string): string {
+  let root = path.parse(cwd).root
+  let subs = toArray(name)
+  while (cwd && cwd !== root) {
+    let find = findMatch(cwd, subs)
+    if (find) return path.join(cwd, find)
     cwd = path.dirname(cwd)
   }
   return null
 }
 
-export function readFile(fullpath: string, encoding: string): Promise<string> {
+export function readFile(fullpath: string, encoding: BufferEncoding): Promise<string> {
   return new Promise((resolve, reject) => {
     fs.readFile(fullpath, encoding, (err, content) => {
       if (err) reject(err)
@@ -149,18 +298,15 @@ export function readFileLines(fullpath: string, start: number, end: number): Pro
     return Promise.reject(new Error(`file does not exist: ${fullpath}`))
   }
   let res: string[] = []
+  const input = fs.createReadStream(fullpath, { encoding: 'utf8' })
   const rl = readline.createInterface({
-    input: fs.createReadStream(fullpath, { encoding: 'utf8' }),
+    input,
     crlfDelay: Infinity,
     terminal: false
   } as any)
   let n = 0
   return new Promise((resolve, reject) => {
     rl.on('line', line => {
-      if (n == 0 && line.startsWith('\uFEFF')) {
-        // handle BOM
-        line = line.slice(1)
-      }
       if (n >= start && n <= end) {
         res.push(line)
       }
@@ -171,53 +317,82 @@ export function readFileLines(fullpath: string, start: number, end: number): Pro
     })
     rl.on('close', () => {
       resolve(res)
+      input.close()
     })
     rl.on('error', reject)
   })
 }
 
 export function readFileLine(fullpath: string, count: number): Promise<string> {
-  if (!fs.existsSync(fullpath)) {
-    return Promise.reject(new Error(`file does not exist: ${fullpath}`))
-  }
-  const rl = readline.createInterface({
-    input: fs.createReadStream(fullpath, { encoding: 'utf8' }),
-    crlfDelay: Infinity,
-    terminal: false
-  } as any)
+  if (!fs.existsSync(fullpath)) return Promise.reject(new Error(`file does not exist: ${fullpath}`))
+  const input = fs.createReadStream(fullpath, { encoding: 'utf8' })
+  const rl = readline.createInterface({ input, crlfDelay: Infinity, terminal: false } as any)
   let n = 0
+  let result = ''
   return new Promise((resolve, reject) => {
     rl.on('line', line => {
       if (n == count) {
-        if (n == 0 && line.startsWith('\uFEFF')) {
-          // handle BOM
-          line = line.slice(1)
-        }
+        result = line
+        rl.close()
+        input.close()
+      }
+      n = n + 1
+    })
+    rl.on('close', () => {
+      resolve(result)
+    })
+    rl.on('error', reject)
+  })
+}
+
+export async function lineToLocation(fsPath: string, match: string, text?: string): Promise<Location> {
+  let uri = URI.file(fsPath).toString()
+  if (!fs.existsSync(fsPath)) return Location.create(uri, Range.create(0, 0, 0, 0))
+  const rl = readline.createInterface({
+    input: fs.createReadStream(fsPath, { encoding: 'utf8' }),
+  })
+  let n = 0
+  let line = await new Promise<string | undefined>(resolve => {
+    let find = false
+    rl.on('line', line => {
+      if (line.includes(match)) {
+        find = true
+        rl.removeAllListeners()
         rl.close()
         resolve(line)
         return
       }
       n = n + 1
     })
-    rl.on('error', reject)
+    rl.on('close', () => {
+      if (!find) resolve(undefined)
+    })
   })
+  if (line != null) {
+    let character = text == null ? 0 : line.indexOf(text)
+    if (character == 0) character = line.match(/^\s*/)[0].length
+    let end = Position.create(n, character + (text ? text.length : 0))
+    return Location.create(uri, Range.create(Position.create(n, character), end))
+  }
+  return Location.create(uri, Range.create(0, 0, 0, 0))
+}
+
+export function sameFile(fullpath: string | null, other: string | null, caseInsensitive?: boolean): boolean {
+  caseInsensitive = typeof caseInsensitive == 'boolean' ? caseInsensitive : platform.isWindows || platform.isMacintosh
+  if (!fullpath || !other) return false
+  fullpath = normalizeFilePath(fullpath)
+  other = normalizeFilePath(other)
+  if (caseInsensitive) return fullpath.toLowerCase() === other.toLowerCase()
+  return fullpath === other
+}
+
+export function fileStartsWith(dir: string, pdir: string, caseInsensitive = platform.isWindows || platform.isMacintosh) {
+  if (caseInsensitive) return dir.toLowerCase().startsWith(pdir.toLowerCase())
+  return dir.startsWith(pdir)
 }
 
 export async function writeFile(fullpath: string, content: string): Promise<void> {
-  await fs.writeFile(fullpath, content, { encoding: 'utf8' })
-}
-
-export function validSocket(path: string): Promise<boolean> {
-  let clientSocket = new net.Socket()
-  return new Promise(resolve => {
-    clientSocket.on('error', () => {
-      resolve(false)
-    })
-    clientSocket.connect({ path }, () => {
-      clientSocket.unref()
-      resolve(true)
-    })
-  })
+  await promisify(fs.writeFile)(fullpath, content, { encoding: 'utf8' })
 }
 
 export function isFile(uri: string): boolean {
@@ -235,17 +410,13 @@ export function parentDirs(pth: string): string[] {
   return dirs
 }
 
-export function isParentFolder(folder: string, filepath: string, checkEqual = false): boolean {
-  let pdir = fixDriver(path.resolve(path.normalize(folder)))
-  let dir = fixDriver(path.resolve(path.normalize(filepath)))
-  if (pdir == '//') pdir = '/'
-  if (pdir == dir) return checkEqual ? true : false
-  if (pdir.endsWith(path.sep)) return dir.startsWith(pdir)
-  return dir.startsWith(pdir) && dir[pdir.length] == path.sep
+export function normalizeFilePath(filepath: string) {
+  return URI.file(path.resolve(path.normalize(filepath))).fsPath
 }
 
-// use uppercase for windows driver
-export function fixDriver(filepath: string): string {
-  if (os.platform() != 'win32' || filepath[1] != ':') return filepath
-  return filepath[0].toUpperCase() + filepath.slice(1)
+export function isParentFolder(folder: string, filepath: string, checkEqual = false): boolean {
+  let pdir = normalizeFilePath(folder)
+  let dir = normalizeFilePath(filepath)
+  if (sameFile(pdir, dir)) return checkEqual ? true : false
+  return fileStartsWith(dir, pdir) && dir[pdir.length] == path.sep
 }

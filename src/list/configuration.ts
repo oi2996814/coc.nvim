@@ -1,8 +1,6 @@
-import workspace from '../workspace'
+'use strict'
 import window from '../window'
-import { WorkspaceConfiguration } from '../types'
-import { EventEmitter } from 'events'
-import { Disposable } from 'vscode-languageserver-protocol'
+import workspace from '../workspace'
 
 export const validKeys = [
   '<esc>',
@@ -25,6 +23,8 @@ export const validKeys = [
   '<LeftDrag>',
   '<LeftRelease>',
   '<2-LeftMouse>',
+  '<C-space>',
+  '<C-_>',
   '<C-a>',
   '<C-b>',
   '<C-c>',
@@ -79,42 +79,43 @@ export const validKeys = [
   '<A-z>',
 ]
 
-export default class ListConfiguration extends EventEmitter {
-  private configuration: WorkspaceConfiguration
-  private disposable: Disposable
-  constructor() {
-    super()
-    this.configuration = workspace.getConfiguration('list')
-    this.disposable = workspace.onDidChangeConfiguration(e => {
-      if (e.affectsConfiguration('list')) {
-        this.configuration = workspace.getConfiguration('list')
-        this.emit('change')
-      }
-    })
+export class ListConfiguration {
+  public get debounceTime(): number {
+    return this.get<number>('interactiveDebounceTime', 100)
+  }
+
+  public get extendedSearchMode(): boolean {
+    return this.get<boolean>('extendedSearchMode', true)
+  }
+
+  public get smartcase(): boolean {
+    return this.get<boolean>('smartCase', false)
+  }
+
+  public get signOffset(): number {
+    return this.get<number>('signOffset', 900)
   }
 
   public get<T>(key: string, defaultValue?: T): T {
-    return this.configuration.get<T>(key, defaultValue)
+    let configuration = workspace.initialConfiguration
+    return configuration.get<T>('list.' + key, defaultValue)
   }
 
   public get previousKey(): string {
-    return this.fixKey(this.configuration.get<string>('previousKeymap', '<C-j>'))
+    return this.fixKey(this.get<string>('previousKeymap', '<C-j>'))
   }
 
   public get nextKey(): string {
-    return this.fixKey(this.configuration.get<string>('nextKeymap', '<C-k>'))
-  }
-
-  public dispose(): void {
-    this.disposable.dispose()
-    this.removeAllListeners()
+    return this.fixKey(this.get<string>('nextKeymap', '<C-k>'))
   }
 
   public fixKey(key: string): string {
     if (validKeys.includes(key)) return key
     let find = validKeys.find(s => s.toLowerCase() == key.toLowerCase())
     if (find) return find
-    window.showMessage(`Configured key "${key}" not supported.`, 'error')
+    void window.showErrorMessage(`Configured key "${key}" not supported.`)
     return null
   }
 }
+
+export default new ListConfiguration()

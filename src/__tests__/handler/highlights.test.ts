@@ -1,9 +1,11 @@
-import { Neovim } from '@chemzqm/neovim'
-import { Disposable, DocumentHighlightKind, Position, Range } from 'vscode-languageserver-protocol'
+import { Neovim } from '../../neovim'
+import { Disposable, DocumentHighlightKind, Position, Range, TextEdit } from 'vscode-languageserver-protocol'
+import commands from '../../commands'
 import Highlights from '../../handler/highlights'
 import languages from '../../languages'
-import workspace from '../../workspace'
 import { disposeAll } from '../../util'
+import window from '../../window'
+import workspace from '../../workspace'
 import helper from '../helper'
 
 let nvim: Neovim
@@ -13,7 +15,7 @@ let highlights: Highlights
 beforeAll(async () => {
   await helper.setup()
   nvim = helper.nvim
-  highlights = helper.plugin.getHandler().documentHighlighter
+  highlights = helper.plugin.handler.documentHighlighter
 })
 
 afterAll(async () => {
@@ -26,7 +28,7 @@ afterEach(async () => {
   disposables = []
 })
 
-function registProvider(): void {
+function registerProvider(): void {
   disposables.push(languages.registerDocumentHighlightProvider([{ language: '*' }], {
     provideDocumentHighlights: async document => {
       let word = await nvim.eval('expand("<cword>")')
@@ -38,24 +40,16 @@ function registProvider(): void {
         let end = document.positionAt(o.index + o[0].length)
         return {
           range: Range.create(start, end),
-          kind: i % 2 == 0 ? DocumentHighlightKind.Read : DocumentHighlightKind.Write
+          kind: i == 0 ? DocumentHighlightKind.Text : i % 2 == 0 ? DocumentHighlightKind.Read : DocumentHighlightKind.Write
         }
-      })
+      }).concat([{ range: undefined, kind: 2 }])
     }
   }))
 }
 
 describe('document highlights', () => {
-
-  it('should return null when highlights provide not exists', async () => {
-    let doc = await helper.createDocument()
-    let res = await highlights.getHighlights(doc, Position.create(0, 0))
-    expect(res).toBeNull()
-  })
-
-  it('should cancel request on CursorMoved', async () => {
-    let fn = jest.fn()
-    languages.registerDocumentHighlightProvider([{ language: '*' }], {
+  function registerTimerProvider(fn: Function, timeout: number): void {
+    disposables.push(languages.registerDocumentHighlightProvider([{ language: '*' }], {
       provideDocumentHighlights: (_document, _position, token) => {
         return new Promise(resolve => {
           token.onCancellationRequested(() => {
@@ -65,10 +59,104 @@ describe('document highlights', () => {
           })
           let timer = setTimeout(() => {
             resolve([{ range: Range.create(0, 0, 0, 3) }])
-          }, 3000)
+          }, timeout)
         })
       }
-    })
+    }))
+  }
+
+  it('should not throw when no range to jump', async () => {
+    let fn = jest.fn()
+    registerTimerProvider(fn, 10)
+    await commands.executeCommand('document.jumpToNextSymbol')
+    await commands.executeCommand('document.jumpToPrevSymbol')
+  })
+
+  it('should jump to previous range', async () => {
+    disposables.push(languages.registerDocumentHighlightProvider([{ language: '*' }], {
+      provideDocumentHighlights: () => {
+        return [{
+          range: Range.create(0, 0, 0, 1),
+          kind: DocumentHighlightKind.Read
+        }, {
+          range: Range.create(0, 2, 0, 3),
+          kind: DocumentHighlightKind.Read
+        }]
+      }
+    }))
+    await nvim.setLine('foo bar')
+    await nvim.command('normal! $')
+    await commands.executeCommand('document.jumpToPrevSymbol')
+    let cur = await window.getCursorPosition()
+    expect(cur).toEqual(Position.create(0, 2))
+    await commands.executeCommand('document.jumpToPrevSymbol')
+    cur = await window.getCursorPosition()
+    expect(cur).toEqual(Position.create(0, 0))
+    await commands.executeCommand('document.jumpToPrevSymbol')
+    cur = await window.getCursorPosition()
+    expect(cur).toEqual(Position.create(0, 2))
+  })
+
+  it('should jump to next range', async () => {
+    disposables.push(languages.registerDocumentHighlightProvider([{ language: '*' }], {
+      provideDocumentHighlights: () => {
+        return [{
+          range: Range.create(0, 0, 0, 1),
+          kind: DocumentHighlightKind.Read
+        }, {
+          range: Range.create(0, 2, 0, 3),
+          kind: DocumentHighlightKind.Read
+        }]
+      }
+    }))
+    await nvim.setLine('foo bar')
+    await nvim.command('normal! ^')
+    await commands.executeCommand('document.jumpToNextSymbol')
+    let cur = await window.getCursorPosition()
+    expect(cur).toEqual(Position.create(0, 2))
+    await commands.executeCommand('document.jumpToNextSymbol')
+    cur = await window.getCursorPosition()
+    expect(cur).toEqual(Position.create(0, 0))
+    await commands.executeCommand('document.jumpToNextSymbol')
+    cur = await window.getCursorPosition()
+    expect(cur).toEqual(Position.create(0, 2))
+  })
+
+  it('should not throw when provide throws', async () => {
+    disposables.push(languages.registerDocumentHighlightProvider([{ language: '*' }], {
+      provideDocumentHighlights: () => {
+        return null
+      }
+    }))
+    disposables.push(languages.registerDocumentHighlightProvider([{ language: '*' }], {
+      provideDocumentHighlights: () => {
+        throw new Error('fake error')
+      }
+    }))
+    disposables.push(languages.registerDocumentHighlightProvider([{ language: '*' }], {
+      provideDocumentHighlights: () => {
+        return [{
+          range: Range.create(0, 0, 0, 3),
+          kind: DocumentHighlightKind.Read
+        }]
+      }
+    }))
+    let doc = await workspace.document
+    await doc.applyEdits([TextEdit.insert(Position.create(0, 0), 'foo')])
+    let res = await highlights.getHighlights(doc, Position.create(0, 0))
+    expect(res).toBeDefined()
+  })
+
+  it('should return null when highlights provide not exist', async () => {
+    let doc = await workspace.document
+    await doc.applyEdits([TextEdit.insert(Position.create(0, 0), 'foo')])
+    let res = await highlights.getHighlights(doc, Position.create(0, 0))
+    expect(res).toBeNull()
+  })
+
+  it('should cancel request on CursorMoved', async () => {
+    let fn = jest.fn()
+    registerTimerProvider(fn, 3000)
     await helper.edit()
     await nvim.setLine('foo')
     let p = highlights.highlight()
@@ -78,17 +166,27 @@ describe('document highlights', () => {
     expect(fn).toBeCalled()
   })
 
+  it('should cancel on timeout', async () => {
+    helper.updateConfiguration('documentHighlight.timeout', 10)
+    let fn = jest.fn()
+    registerTimerProvider(fn, 3000)
+    await helper.edit()
+    await nvim.setLine('foo')
+    await highlights.highlight()
+    expect(fn).toBeCalled()
+  })
+
   it('should add highlights to symbols', async () => {
-    registProvider()
+    registerProvider()
     await helper.createDocument()
-    await nvim.setLine('foo bar foo')
+    await nvim.setLine('foo bar foo foo bar')
     await helper.doAction('highlight')
     let winid = await nvim.call('win_getid') as number
     expect(highlights.hasHighlights(winid)).toBe(true)
   })
 
   it('should return highlight ranges', async () => {
-    registProvider()
+    registerProvider()
     await helper.createDocument()
     await nvim.setLine('foo bar foo')
     let res = await helper.doAction('symbolRanges')
@@ -112,14 +210,8 @@ describe('document highlights', () => {
     await nvim.call('feedkeys', ['q:', 'in'])
     let doc = await workspace.document
     expect(doc.isCommandLine).toBe(true)
-    let err
-    try {
-      await highlights.highlight()
-    } catch (e) {
-      err = e
-    }
+    await highlights.highlight()
     await nvim.input('<C-c>')
-    expect(err).toBeUndefined()
   })
 
   it('should not throw when provider not found', async () => {
@@ -127,12 +219,6 @@ describe('document highlights', () => {
     await helper.createDocument()
     await nvim.setLine('  oo')
     await nvim.call('cursor', [1, 2])
-    let err
-    try {
-      await highlights.highlight()
-    } catch (e) {
-      err = e
-    }
-    expect(err).toBeUndefined()
+    await highlights.highlight()
   })
 })

@@ -1,4 +1,5 @@
-import { SymbolKind } from 'vscode-languageserver-protocol'
+'use strict'
+import { SymbolKind } from 'vscode-languageserver-types'
 
 export function getSymbolKind(kind: SymbolKind): string {
   switch (kind) {

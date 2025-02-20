@@ -1,7 +1,7 @@
-import { Disposable } from 'vscode-languageserver-protocol'
-import { NeovimClient as Neovim } from '@chemzqm/neovim'
+'use strict'
+import type { Disposable } from '../util/protocol'
 import { v1 as uuidv1 } from 'uuid'
-const logger = require('../util/logger')('model-status')
+import { Neovim } from '../neovim'
 
 export const frames = ['⠋', '⠙', '⠹', '⠸', '⠼', '⠴', '⠦', '⠧', '⠇', '⠏']
 
@@ -22,18 +22,26 @@ export default class StatusLine implements Disposable {
   private items: Map<string, StatusBarItem> = new Map()
   private shownIds: Set<string> = new Set()
   private _text = ''
-  private interval: NodeJS.Timer
-  constructor(private nvim: Neovim) {
+  private interval: NodeJS.Timeout
+  public nvim: Neovim
+  constructor() {
     this.interval = setInterval(() => {
-      this.setStatusText().logError()
-    }, 100)
+      this.setStatusText()
+    }, 100).unref()
   }
 
   public dispose(): void {
+    this.items.clear()
+    this.shownIds.clear()
     clearInterval(this.interval)
   }
 
-  public createStatusBarItem(priority = 0, isProgress = false): StatusBarItem {
+  public reset(): void {
+    this.items.clear()
+    this.shownIds.clear()
+  }
+
+  public createStatusBarItem(priority: number, isProgress = false): StatusBarItem {
     let uid = uuidv1()
 
     let item: StatusBarItem = {
@@ -42,13 +50,16 @@ export default class StatusLine implements Disposable {
       isProgress,
       show: () => {
         this.shownIds.add(uid)
+        this.setStatusText()
       },
       hide: () => {
         this.shownIds.delete(uid)
+        this.setStatusText()
       },
       dispose: () => {
         this.shownIds.delete(uid)
         this.items.delete(uid)
+        this.setStatusText()
       }
     }
     this.items.set(uid, item)
@@ -77,15 +88,15 @@ export default class StatusLine implements Disposable {
     return text
   }
 
-  private async setStatusText(): Promise<void> {
+  private setStatusText(): void {
     let text = this.getText()
     let { nvim } = this
-    if (text != this._text) {
+    if (text != this._text && nvim) {
       this._text = text
       nvim.pauseNotification()
       this.nvim.setVar('coc_status', text, true)
       this.nvim.call('coc#util#do_autocmd', ['CocStatusChange'], true)
-      await nvim.resumeNotification(false, true)
+      nvim.resumeNotification(false, true)
     }
   }
 }

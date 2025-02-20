@@ -1,11 +1,15 @@
-import { Neovim } from '@chemzqm/neovim'
+'use strict'
 import commandManager from '../../commands'
-import events from '../../events'
 import Mru from '../../model/mru'
-import { ListContext, ListItem } from '../../types'
+import { ListContext, ListItem } from '../types'
+import { Extensions as ExtensionsInfo, IExtensionRegistry } from '../../util/extensionRegistry'
+import { Registry } from '../../util/registry'
 import workspace from '../../workspace'
 import BasicList from '../basic'
 import { formatListItems, UnformattedListItem } from '../formatting'
+import { toText } from '../../util/string'
+
+const extensionRegistry = Registry.as<IExtensionRegistry>(ExtensionsInfo.ExtensionContribution)
 
 export default class CommandsList extends BasicList {
   public defaultAction = 'run'
@@ -13,30 +17,30 @@ export default class CommandsList extends BasicList {
   public readonly name = 'commands'
   private mru: Mru
 
-  constructor(nvim: Neovim) {
-    super(nvim)
+  constructor() {
+    super()
     this.mru = workspace.createMru('commands')
     this.addAction('run', async item => {
-      let { cmd } = item.data
-      await events.fire('Command', [cmd])
-      commandManager.executeCommand(cmd).logError()
-      await commandManager.addRecent(cmd)
+      await commandManager.fireCommand(item.data.cmd)
     })
     this.addAction('append', async item => {
       let { cmd } = item.data
-      await nvim.feedKeys(`:CocCommand ${cmd} `, 'n', false)
+      await workspace.nvim.feedKeys(`:CocCommand ${cmd} `, 'n', false)
     })
   }
 
   public async loadItems(_context: ListContext): Promise<ListItem[]> {
     let items: UnformattedListItem[] = []
     let mruList = await this.mru.load()
-    let { commandList, onCommandList, titles } = commandManager
-    let ids = commandList.map(c => c.id).concat(onCommandList)
-    for (const id of [...new Set(ids)]) {
+    let ids: Set<string> = new Set()
+    for (const obj of extensionRegistry.onCommands.concat(commandManager.commandList)) {
+      let { id, title } = obj
+      if (ids.has(id)) continue
+      ids.add(id)
+      let desc = toText(title)
       items.push({
-        label: [id, ...(titles.get(id) ? [titles.get(id)] : [])],
-        filterText: id,
+        label: [id, desc],
+        filterText: id + ' ' + desc,
         data: { cmd: id, score: score(mruList, id) }
       })
     }
@@ -49,7 +53,7 @@ export default class CommandsList extends BasicList {
     nvim.pauseNotification()
     nvim.command('syntax match CocCommandsTitle /\\t.*$/ contained containedin=CocCommandsLine', true)
     nvim.command('highlight default link CocCommandsTitle Comment', true)
-    void nvim.resumeNotification(false, true)
+    nvim.resumeNotification(false, true)
   }
 }
 

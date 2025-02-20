@@ -1,9 +1,10 @@
-import { Neovim } from '@chemzqm/neovim'
+import { Neovim } from '../../neovim'
 import { Disposable } from 'vscode-languageserver-protocol'
 import BasicList from '../../list/basic'
 import manager from '../../list/manager'
 import ListSession from '../../list/session'
-import { ListItem } from '../../types'
+import Prompt from '../../list/prompt'
+import { ListItem, IList } from '../../list/types'
 import { disposeAll } from '../../util'
 import helper from '../helper'
 
@@ -18,11 +19,11 @@ class SimpleList extends BasicList {
     name: 'foo',
     description: 'foo'
   }]
-  constructor(nvim: Neovim) {
-    super(nvim)
+  constructor() {
+    super()
     this.addAction('open', item => {
       lastItem = item.label
-    })
+    }, { tabPersist: true })
     this.addMultipleAction('multiple', items => {
       lastItems = items
     })
@@ -59,10 +60,12 @@ afterEach(async () => {
 
 describe('list session', () => {
   describe('doDefaultAction()', () => {
-    it('should throw error when default action not exists', async () => {
+    it('should throw error when default action does not exist', async () => {
       labels = ['a', 'b', 'c']
-      let list = new SimpleList(nvim)
+      let list = new SimpleList()
       list.defaultAction = 'foo'
+      let len = list.actions.length
+      list.actions.splice(0, len)
       disposables.push(manager.registerList(list))
       await manager.start(['--normal', 'simple'])
       let ui = manager.session.ui
@@ -87,7 +90,7 @@ describe('list session', () => {
   describe('doItemAction()', () => {
     it('should invoke multiple action', async () => {
       labels = ['a', 'b', 'c']
-      let list = new SimpleList(nvim)
+      let list = new SimpleList()
       disposables.push(manager.registerList(list))
       await manager.start(['--normal', 'simple'])
       let ui = manager.session.ui
@@ -96,11 +99,15 @@ describe('list session', () => {
       await manager.doAction('multiple')
       expect(lastItems.length).toBe(3)
       lastItems = undefined
+      await manager.session.doPreview(0)
+      await manager.doAction('not_exists')
+      let line = await helper.getCmdline()
+      expect(line).toMatch('not found')
     })
 
     it('should invoke parallel action', async () => {
       labels = ['a', 'b', 'c']
-      let list = new SimpleList(nvim)
+      let list = new SimpleList()
       disposables.push(manager.registerList(list))
       await manager.start(['--normal', 'simple'])
       let ui = manager.session.ui
@@ -111,9 +118,24 @@ describe('list session', () => {
       expect(Date.now() - d).toBeLessThan(300)
     })
 
+    it('should support tabPersist action', async () => {
+      labels = ['a', 'b', 'c']
+      let list = new SimpleList()
+      disposables.push(manager.registerList(list))
+      await manager.start(['--normal', '--tab', 'simple'])
+      let ui = manager.session.ui
+      await ui.ready
+      await manager.doAction('open')
+      let tabnr = await nvim.call('tabpagenr')
+      expect(tabnr).toBeGreaterThan(1)
+      let win = nvim.createWindow(ui.winid)
+      let valid = await win.valid
+      expect(valid).toBe(true)
+    })
+
     it('should invoke reload action', async () => {
       labels = ['a', 'b', 'c']
-      let list = new SimpleList(nvim)
+      let list = new SimpleList()
       disposables.push(manager.registerList(list))
       await manager.start(['--normal', 'simple'])
       let ui = manager.session.ui
@@ -127,11 +149,37 @@ describe('list session', () => {
     })
   })
 
+  describe('reloadItems()', () => {
+    it('should not reload items when window is hidden', async () => {
+      let fn = jest.fn()
+      let list: IList = {
+        name: 'reload',
+        defaultAction: 'open',
+        actions: [{
+          name: 'open',
+          execute: () => {}
+        }],
+        loadItems: () => {
+          fn()
+          return Promise.resolve([])
+        }
+      }
+      disposables.push(manager.registerList(list))
+      await manager.start(['--normal', 'reload'])
+      let ui = manager.session.ui
+      await ui.ready
+      await manager.cancel(true)
+      let ses = manager.getSession('reload')
+      await ses.reloadItems()
+      expect(fn).toBeCalledTimes(1)
+    })
+  })
+
   describe('resume()', () => {
     it('should do preview on resume', async () => {
       labels = ['a', 'b', 'c']
       let lastItem
-      let list = new SimpleList(nvim)
+      let list = new SimpleList()
       list.actions.push({
         name: 'preview',
         execute: item => {
@@ -156,7 +204,7 @@ describe('list session', () => {
     it('should jump back', async () => {
       let win = await nvim.window
       labels = ['a', 'b', 'c']
-      let list = new SimpleList(nvim)
+      let list = new SimpleList()
       disposables.push(manager.registerList(list))
       await manager.start(['--normal', 'simple'])
       let ui = manager.session.ui
@@ -168,6 +216,34 @@ describe('list session', () => {
     })
   })
 
+  describe('hide()', () => {
+    it('should not throw when window undefined', async () => {
+      let session = new ListSession(nvim, new Prompt(nvim), new SimpleList(), {
+        reverse: true,
+        numberSelect: true,
+        autoPreview: true,
+        first: false,
+        input: 'test',
+        interactive: false,
+        matcher: 'strict',
+        ignorecase: true,
+        position: 'top',
+        mode: 'normal',
+        noQuit: false,
+        sort: false
+      }, [])
+      await expect(async () => {
+        await session.call('fn_not_exists')
+      }).rejects.toThrow(Error)
+      await session.doPreview(0)
+      await session.first()
+      await session.hide(false, true)
+      let worker: any = session.worker
+      worker._onDidChangeItems.fire({ items: [] })
+      worker._onDidChangeLoading.fire(false)
+    })
+  })
+
   describe('doNumberSelect()', () => {
     async function create(len: number): Promise<ListSession> {
       labels = []
@@ -175,7 +251,7 @@ describe('list session', () => {
         let code = 'a'.charCodeAt(0) + i
         labels.push(String.fromCharCode(code))
       }
-      let list = new SimpleList(nvim)
+      let list = new SimpleList()
       disposables.push(manager.registerList(list))
       await manager.start(['--normal', '--number-select', 'simple'])
       let ui = manager.session.ui
@@ -203,13 +279,13 @@ describe('list session', () => {
 describe('showHelp()', () => {
   it('should show description and options in help', async () => {
     labels = ['a', 'b', 'c']
-    let list = new SimpleList(nvim)
+    let list = new SimpleList()
     disposables.push(manager.registerList(list))
     await manager.start(['--normal', 'simple'])
     let ui = manager.session.ui
     await ui.ready
     await manager.session.showHelp()
-    let lines = await nvim.call('getline', [1, '$'])
+    let lines = await nvim.call('getline', [1, '$']) as string[]
     expect(lines.indexOf('DESCRIPTION')).toBeGreaterThan(0)
     expect(lines.indexOf('ARGUMENTS')).toBeGreaterThan(0)
   })
@@ -218,10 +294,12 @@ describe('showHelp()', () => {
 describe('chooseAction()', () => {
   it('should filter actions not have shortcuts', async () => {
     labels = ['a', 'b', 'c']
-    let list = new SimpleList(nvim)
+    let fn = jest.fn()
+    let list = new SimpleList()
     list.actions.push({
       name: 'a',
       execute: () => {
+        fn()
       }
     })
     list.actions.push({
@@ -236,11 +314,39 @@ describe('chooseAction()', () => {
     })
     disposables.push(manager.registerList(list))
     await manager.start(['--normal', 'simple'])
-    let ui = manager.session.ui
-    await ui.ready
+    await manager.session.ui.ready
     let p = manager.session.chooseAction()
-    await helper.wait(100)
+    await helper.wait(50)
     await nvim.input('a')
+    await p
+    expect(fn).toBeCalled()
+  })
+
+  it('should choose action by menu picker', async () => {
+    helper.updateConfiguration('list.menuAction', true)
+    labels = ['a', 'b', 'c']
+    let fn = jest.fn()
+    let list = new SimpleList()
+    let len = list.actions.length
+    list.actions.splice(0, len)
+    list.actions.push({
+      name: 'a',
+      execute: () => {
+        fn()
+      }
+    })
+    list.actions.push({
+      name: 'b',
+      execute: () => {
+        fn()
+      }
+    })
+    disposables.push(manager.registerList(list))
+    await manager.start(['--normal', 'simple'])
+    await manager.session.ui.ready
+    let p = manager.session.chooseAction()
+    await helper.waitPrompt()
+    await nvim.input('<cr>')
     await p
   })
 })

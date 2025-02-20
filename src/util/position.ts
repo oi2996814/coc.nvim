@@ -1,7 +1,72 @@
-import { Position, Range, TextEdit } from 'vscode-languageserver-protocol'
+'use strict'
+import { Position, Range } from 'vscode-languageserver-types'
 
 export function rangeInRange(r: Range, range: Range): boolean {
   return positionInRange(r.start, range) === 0 && positionInRange(r.end, range) === 0
+}
+
+export function equalsRange(r: Range, range: Range): boolean {
+  if (!samePosition(r.start, range.start)) return false
+  return samePosition(r.end, range.end)
+}
+
+export function samePosition(one: Position, two: Position): boolean {
+  return one.line === two.line && one.character === two.character
+}
+
+/**
+ * A function that compares ranges, useful for sorting ranges
+ * It will first compare ranges on the startPosition and then on the endPosition
+ */
+export function compareRangesUsingStarts(a: Range, b: Range): number {
+  const aStartLineNumber = a.start.line | 0
+  const bStartLineNumber = b.start.line | 0
+
+  if (aStartLineNumber === bStartLineNumber) {
+    const aStartColumn = a.start.character | 0
+    const bStartColumn = b.start.character | 0
+
+    if (aStartColumn === bStartColumn) {
+      const aEndLineNumber = a.end.line | 0
+      const bEndLineNumber = b.end.line | 0
+
+      if (aEndLineNumber === bEndLineNumber) {
+        const aEndColumn = a.end.character | 0
+        const bEndColumn = b.end.character | 0
+        return aEndColumn - bEndColumn
+      }
+      return aEndLineNumber - bEndLineNumber
+    }
+    return aStartColumn - bStartColumn
+  }
+  return aStartLineNumber - bStartLineNumber
+}
+
+/**
+ * Convert to well formed range
+ */
+export function toValidRange(range: Range, max?: number): Range {
+  let { start, end } = range
+  if (start.line > end.line || (start.line === end.line && start.character > end.character)) {
+    let m = start
+    start = end
+    end = m
+  }
+  start = Position.create(Math.max(0, start.line), Math.max(0, start.character))
+  let endCharacter = Math.max(0, end.character)
+  if (typeof max === 'number' && endCharacter > max) endCharacter = max
+  end = Position.create(Math.max(0, end.line), endCharacter)
+  return { start, end }
+}
+
+export function rangeAdjacent(r: Range, range: Range): boolean {
+  if (comparePosition(r.end, range.start) == 0) {
+    return true
+  }
+  if (comparePosition(range.end, r.start) == 0) {
+    return true
+  }
+  return false
 }
 
 /**
@@ -34,6 +99,16 @@ export function rangeIntersect(r: Range, range: Range): boolean {
   return false
 }
 
+/**
+ * Adjust from start position
+ */
+export function adjustRangePosition(range: Range, position: Position): Range {
+  let { line, character } = position
+  let { start, end } = range
+  let endCharacter = end.line == start.line ? end.character + character : end.character
+  return Range.create(start.line + line, character + start.character, end.line + line, endCharacter)
+}
+
 export function lineInRange(line: number, range: Range): boolean {
   let { start, end } = range
   return line >= start.line && line <= end.line
@@ -62,71 +137,13 @@ export function isSingleLine(range: Range): boolean {
   return range.start.line == range.end.line
 }
 
-export function getChangedPosition(start: Position, edit: TextEdit): { line: number; character: number } {
-  let { range, newText } = edit
-  if (comparePosition(range.end, start) <= 0) {
-    let lines = newText.split('\n')
-    let lineCount = lines.length - (range.end.line - range.start.line) - 1
-    let characterCount = 0
-    if (range.end.line == start.line) {
-      let single = isSingleLine(range) && lineCount == 0
-      let removed = single ? range.end.character - range.start.character : range.end.character
-      let added = single ? newText.length : lines[lines.length - 1].length
-      characterCount = added - removed
-    }
-    return { line: lineCount, character: characterCount }
-  }
-  return { line: 0, character: 0 }
-}
-
-export function adjustPosition(pos: Position, edit: TextEdit): Position {
-  let { range, newText } = edit
-  if (comparePosition(range.start, pos) > 1) return pos
-  let { start, end } = range
-  let newLines = newText.split('\n')
-  let delta = (end.line - start.line) - newLines.length + 1
-  let lastLine = newLines[newLines.length - 1]
-  let line = pos.line - delta
-  if (pos.line != end.line) return { line, character: pos.character }
-  let pre = newLines.length == 1 && start.line != end.line ? start.character : 0
-  let removed = start.line == end.line && newLines.length == 1 ? end.character - start.character : end.character
-  let character = pre + pos.character + lastLine.length - removed
-  return {
-    line,
-    character
-  }
-}
-
-export function positionToOffset(lines: string[], line: number, character: number): number {
-  let offset = 0
-  for (let i = 0; i <= line; i++) {
-    if (i == line) {
-      offset += character
-    } else {
-      offset += lines[i].length + 1
-    }
-  }
-  return offset
-}
-
-// edit a range to newText
-export function editRange(range: Range, text: string, edit: TextEdit): string {
-  // outof range
-  if (!rangeInRange(edit.range, range)) return text
-  let { start, end } = edit.range
-  let lines = text.split('\n')
-  let character = start.line == range.start.line ? start.character - range.start.character : start.character
-  let startOffset = positionToOffset(lines, start.line - range.start.line, character)
-  character = end.line == range.start.line ? end.character - range.start.character : end.character
-  let endOffset = positionToOffset(lines, end.line - range.start.line, character)
-  return `${text.slice(0, startOffset)}${edit.newText}${text.slice(endOffset, text.length)}`
-}
-
-export function getChangedFromEdits(start: Position, edits: TextEdit[]): Position | null {
-  let changed = { line: 0, character: 0 }
-  for (let edit of edits) {
-    let d = getChangedPosition(start, edit)
-    changed = { line: changed.line + d.line, character: changed.character + d.character }
-  }
-  return changed.line == 0 && changed.character == 0 ? null : changed
+/*
+ * Get end position by content
+ */
+export function getEnd(start: Position, content: string): Position {
+  const lines = content.split(/\r?\n/)
+  const len = lines.length
+  const lastLine = lines[len - 1]
+  const end = len == 1 ? start.character + content.length : lastLine.length
+  return Position.create(start.line + len - 1, end)
 }

@@ -1,48 +1,29 @@
-import { Buffer, Neovim } from '@chemzqm/neovim'
-import { CancellationToken, Disposable, Emitter, Event } from 'vscode-languageserver-protocol'
+'use strict'
+import { Buffer, Neovim } from '../neovim'
 import events from '../events'
+import { HighlightItem, QuickPickItem } from '../types'
 import { disposeAll } from '../util'
+import { CancellationToken, Disposable, Emitter, Event } from '../util/protocol'
 import { byteLength } from '../util/string'
 import { DialogPreferences } from './dialog'
 import Popup from './popup'
-const logger = require('../util/logger')('model-dialog')
-const isVim = process.env.VIM_NODE_RPC == '1'
 
 interface PickerConfig {
   title: string
   items: QuickPickItem[]
 }
 
-/**
- * Represents an item that can be selected from
- * a list of items.
- */
-export interface QuickPickItem {
-
-  /**
-   * A human-readable string which is rendered prominent
-   */
-  label: string
-
-  /**
-   * A human-readable string which is rendered less prominent in the same line
-   */
-  description?: string
-
-  /**
-   * Optional flag indicating if this item is picked initially.
-   */
-  picked?: boolean
+export function toPickerItems(items: (QuickPickItem | string)[]): QuickPickItem[] {
+  return items.map(item => typeof item === 'string' ? { label: item } : item)
 }
 
 /**
  * Pick multiple items from dialog
  */
 export default class Picker {
-  private bufnr: number
+  public bufnr: number
   private win: Popup | undefined
   private picked: Set<number> = new Set()
-  private currIndex = 0
   private total: number
   private disposables: Disposable[] = []
   private keyMappings: Map<string, (character: string) => void> = new Map()
@@ -60,7 +41,10 @@ export default class Picker {
       })
     }
     this.disposables.push(this._onDidClose)
-    this.addKeymappings()
+  }
+
+  public get currIndex(): number {
+    return this.win ? this.win.currIndex : 0
   }
 
   private attachEvents(): void {
@@ -74,16 +58,16 @@ export default class Picker {
       }
     }, null, this.disposables)
     events.on('FloatBtnClick', (bufnr, idx) => {
-      if (bufnr == this.bufnr) {
-        if (idx == 0) {
-          let selected = Array.from(this.picked)
-          this._onDidClose.fire(selected.length ? selected : undefined)
-        } else {
-          this._onDidClose.fire(undefined)
-        }
-        this.dispose()
+      if (bufnr != this.bufnr) return
+      if (idx == 0) {
+        let selected = Array.from(this.picked)
+        this._onDidClose.fire(selected.length > 0 ? selected : undefined)
+      } else {
+        this._onDidClose.fire(undefined)
       }
+      this.dispose()
     }, null, this.disposables)
+    this.addKeymappings()
   }
 
   private addKeymappings(): void {
@@ -97,22 +81,15 @@ export default class Picker {
     }
     this.addKeys('<LeftRelease>', async () => {
       // not work on vim
-      if (isVim || !this.win) return
-      let [winid, lnum, col] = await nvim.eval('[v:mouse_winid,v:mouse_lnum,v:mouse_col]') as [number, number, number]
-      // can't simulate vvar.
-      if (global.hasOwnProperty('__TEST__')) {
-        let res = await nvim.getVar('mouse_position')
-        winid = res[0]
-        lnum = res[1]
-        col = res[2]
-      }
+      // if (isVim) return
+      let [winid, lnum, col] = await nvim.call('coc#ui#get_mouse') as [number, number, number]
       nvim.pauseNotification()
       if (winid == this.win.winid) {
         if (col <= 3) {
           toggleSelect(lnum - 1)
           this.changeLine(lnum - 1)
         } else {
-          this.setCursor(lnum - 1)
+          this.win.setCursor(lnum - 1)
         }
       }
       nvim.call('win_gotoid', [winid], true)
@@ -134,47 +111,32 @@ export default class Picker {
       }
       this.dispose()
     })
-    let setCursorIndex = idx => {
-      nvim.pauseNotification()
-      this.setCursor(idx)
-      this.win.refreshScrollbar()
-      nvim.command('redraw', true)
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises
-      nvim.resumeNotification(false, true)
-    }
     this.addKeys(['j', '<down>', '<tab>', '<C-n>'], () => {
-      // next
-      let idx = this.currIndex == this.total - 1 ? 0 : this.currIndex + 1
-      setCursorIndex(idx)
+      this.win.setCursor(this.currIndex + 1, true)
     })
     this.addKeys(['k', '<up>', '<s-tab>', '<C-p>'], () => {
-      // previous
-      let idx = this.currIndex == 0 ? this.total - 1 : this.currIndex - 1
-      setCursorIndex(idx)
+      this.win.setCursor(this.currIndex - 1, true)
     })
     this.addKeys(['g'], () => {
-      setCursorIndex(0)
+      this.win.setCursor(0, true)
     })
     this.addKeys(['G'], () => {
-      setCursorIndex(this.total - 1)
+      this.win.setCursor(this.total - 1, true)
     })
     this.addKeys(' ', async () => {
       let idx = this.currIndex
       toggleSelect(idx)
       nvim.pauseNotification()
       this.changeLine(idx)
-      if (this.currIndex != this.total - 1) {
-        this.setCursor(this.currIndex + 1)
-      }
+      this.win.setCursor(this.currIndex + 1)
       nvim.command('redraw', true)
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises
       await nvim.resumeNotification()
     })
     this.addKeys('<C-f>', async () => {
-      await this.win?.scrollForward()
+      await this.win.scrollForward()
     })
     this.addKeys('<C-b>', async () => {
-      await this.win?.scrollBackward()
+      await this.win.scrollBackward()
     })
   }
 
@@ -185,18 +147,13 @@ export default class Picker {
     if (preferences.maxHeight) opts.maxHeight = preferences.maxHeight
     if (preferences.maxWidth) opts.maxWidth = preferences.maxWidth
     if (title) opts.title = title
-    opts.close = 1
-    opts.cursorline = 1
-    if (preferences.floatHighlight) {
-      opts.highlight = preferences.floatHighlight
-    }
-    if (preferences.floatBorderHighlight) {
-      opts.borderhighlight = [preferences.floatBorderHighlight]
-    }
+    if (preferences.floatHighlight) opts.highlight = preferences.floatHighlight
+    if (preferences.floatBorderHighlight) opts.borderhighlight = [preferences.floatBorderHighlight]
     if (preferences.pickerButtons) {
       let shortcut = preferences.pickerButtonShortcut
       opts.buttons = ['Submit' + (shortcut ? ' <cr>' : ''), 'Cancel' + (shortcut ? ' <esc>' : '')]
     }
+    if (preferences.rounded) opts.rounded = 1
     if (preferences.confirmKey && preferences.confirmKey != '<cr>') {
       this.addKeys(preferences.confirmKey, () => {
         this._onDidClose.fire(undefined)
@@ -204,27 +161,24 @@ export default class Picker {
       })
     }
     let lines = []
-    let positions: [number, number][] = []
+    let highlights: HighlightItem[] = []
     for (let i = 0; i < items.length; i++) {
       let item = items[i]
       let line = `[${item.picked ? 'x' : ' '}] ${item.label}`
-      positions.push([i, byteLength(line)])
-      if (item.description) line = line + ` ${item.description}`
+      if (item.description) {
+        let start = byteLength(line)
+        line = line + ` ${item.description}`
+        highlights.push({ hlGroup: 'Comment', lnum: i, colStart: start, colEnd: byteLength(line) })
+      }
       lines.push(line)
     }
-    let res = await nvim.call('coc#float#create_dialog', [lines, opts]) as [number, number]
-    this.win = new Popup(nvim, res[0], res[1])
+    if (highlights.length) opts.highlights = highlights
+    let res = await nvim.call('coc#dialog#create_dialog', [lines, opts]) as [number, number]
+    this.win = new Popup(nvim, res[0], res[1], lines.length)
     this.bufnr = res[1]
-    this.attachEvents()
-    let buf = nvim.createBuffer(this.bufnr)
-    nvim.pauseNotification()
-    for (let pos of positions) {
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises
-      buf.addHighlight({ hlGroup: 'Comment', line: pos[0], srcId: 1, colStart: pos[1], colEnd: -1 })
-    }
-    nvim.command('redraw', true)
-    await nvim.resumeNotification()
     nvim.call('coc#prompt#start_prompt', ['picker'], true)
+    this.attachEvents()
+    this.win.setCursor(0, true)
     return res[0]
   }
 
@@ -241,17 +195,13 @@ export default class Picker {
     this.win = undefined
   }
 
-  private async onInputChar(session: string, character: string): Promise<void> {
+  public async onInputChar(session: string, character: string): Promise<void> {
     if (session != 'picker' || !this.win) return
     let fn = this.keyMappings.get(character)
-    if (fn) {
-      await Promise.resolve(fn(character))
-    } else {
-      logger.warn(`Ignored key press: ${character}`)
-    }
+    if (fn) await Promise.resolve(fn(character))
   }
 
-  private changeLine(index: number): void {
+  public changeLine(index: number): void {
     let { nvim } = this
     let item = this.config.items[index]
     if (!item) return
@@ -259,17 +209,9 @@ export default class Picker {
     let col = byteLength(line)
     if (item.description) line = line + ` ${item.description}`
     nvim.call('setbufline', [this.bufnr, index + 1, line], true)
-    if (!isVim) {
-      let buf = nvim.createBuffer(this.bufnr)
-      // eslint-disable-next-line @typescript-eslint/no-floating-promises
-      buf.addHighlight({ hlGroup: 'Comment', line: index, srcId: 1, colStart: col, colEnd: -1 })
-    }
-  }
-
-  private setCursor(index: number): void {
-    if (!this.win) return
-    this.currIndex = index
-    this.win.setCursor(index)
+    let buf = nvim.createBuffer(this.bufnr)
+    // eslint-disable-next-line @typescript-eslint/no-floating-promises
+    buf.addHighlight({ hlGroup: 'Comment', line: index, srcId: 1, colStart: col, colEnd: -1 })
   }
 
   private addKeys(keys: string | string[], fn: (character: string) => void): void {

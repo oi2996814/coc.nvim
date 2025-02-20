@@ -1,13 +1,40 @@
+'use strict'
 import events from '../events'
-import { Neovim } from '@chemzqm/neovim'
-import { Disposable, Emitter, Event } from 'vscode-languageserver-protocol'
+import { Neovim } from '../neovim'
+import { Disposable, Emitter, Event } from '../util/protocol'
 import { disposeAll } from '../util'
 export const sessionKey = 'filter'
+
+export class HistoryInput {
+  private history: string[] = []
+
+  public next(input: string): string | undefined {
+    let idx = this.history.indexOf(input)
+    return this.history[idx + 1] ?? this.history[0]
+  }
+
+  public previous(input: string): string | undefined {
+    let idx = this.history.indexOf(input)
+    return this.history[idx - 1] ?? this.history[this.history.length - 1]
+  }
+
+  public add(input: string): void {
+    let idx = this.history.indexOf(input)
+    if (idx !== -1) {
+      this.history.splice(idx, 1)
+    }
+    this.history.unshift(input)
+  }
+
+  public toJSON(): string {
+    return `[${this.history.join(',')}]`
+  }
+}
 
 export default class Filter<T> {
   private _activated = false
   private text: string
-  private history: string[] = []
+  private history = new HistoryInput()
   private disposables: Disposable[] = []
   private readonly _onDidUpdate = new Emitter<string>()
   private readonly _onDidExit = new Emitter<T | undefined>()
@@ -25,7 +52,7 @@ export default class Filter<T> {
           this._onDidUpdate.fire(this.text)
           return
         }
-        if (character == '<bs>') {
+        if (character == '<bs>' || character == '<C-h>') {
           this.text = this.text.slice(0, -1)
           this._onDidUpdate.fire(this.text)
           return
@@ -36,8 +63,7 @@ export default class Filter<T> {
           return
         }
         if (character == '<C-n>') {
-          let idx = this.history.indexOf(this.text)
-          let text = this.history[idx + 1] || this.history[0]
+          let text = this.history.next(this.text)
           if (text) {
             this.text = text
             this._onDidUpdate.fire(this.text)
@@ -45,8 +71,7 @@ export default class Filter<T> {
           return
         }
         if (character == '<C-p>') {
-          let idx = this.history.indexOf(this.text)
-          let text = this.history[idx - 1] || this.history[this.history.length - 1]
+          let text = this.history.previous(this.text)
           if (text) {
             this.text = text
             this._onDidUpdate.fire(this.text)
@@ -62,7 +87,6 @@ export default class Filter<T> {
   }
 
   public active(): void {
-    if (this._activated) return
     this._activated = true
     this.text = ''
     this.nvim.call('coc#prompt#start_prompt', [sessionKey], true)
@@ -75,9 +99,7 @@ export default class Filter<T> {
     let { text } = this
     this.text = ''
     this._onDidExit.fire(node)
-    if (text && !this.history.includes(text)) {
-      this.history.push(text)
-    }
+    this.history.add(text)
   }
 
   public get activated(): boolean {
@@ -86,7 +108,6 @@ export default class Filter<T> {
 
   public dispose(): void {
     this.deactivate()
-    this.history = []
     this._onDidKeyPress.dispose()
     this._onDidUpdate.dispose()
     this._onDidExit.dispose()

@@ -1,9 +1,48 @@
-import { VimCompleteItem } from '../types'
+'use strict'
+import { URL } from 'url'
+import { Command, CompletionItem, CompletionList, Hover, MarkedString, MarkupContent, Range } from 'vscode-languageserver-types'
+
 /* eslint-disable id-blacklist */
 const hasOwnProperty = Object.prototype.hasOwnProperty
 
-export function vimCompleteItem(value: any): value is VimCompleteItem {
-  return value && typeof value.word === 'string'
+export function isUrl(url: any): boolean {
+  try {
+    new URL(url)
+    return true
+  } catch (e) {
+    return false
+  }
+}
+
+export function isHover(value: any): value is Hover {
+  let candidate = value as Hover
+  return !!candidate && objectLiteral(candidate) && (
+    MarkupContent.is(candidate.contents) ||
+    MarkedString.is(candidate.contents) ||
+    typedArray(candidate.contents, MarkedString.is)
+  ) && (
+      value.range == null || Range.is(value.range)
+    )
+}
+
+export function isCommand(obj: any): obj is Command {
+  if (!obj || !string(obj.title) || !string(obj.command) || obj.command.length == 0) return false
+  return true
+}
+
+export function isMarkdown(content: MarkupContent | string | undefined): boolean {
+  if (content != null && content['kind'] == 'markdown') {
+    return true
+  }
+  return false
+}
+
+export function isCompletionItem(obj: any): obj is CompletionItem {
+  return obj && typeof obj.label === 'string'
+}
+
+export function isCompletionList(obj: any): obj is CompletionList {
+  return !Array.isArray(obj) && Array.isArray(obj.items)
 }
 
 export function boolean(value: any): value is boolean {

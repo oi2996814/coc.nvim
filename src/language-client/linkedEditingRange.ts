@@ -1,22 +1,10 @@
-/* --------------------------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation. All rights reserved.
- * Licensed under the MIT License. See License.txt in the project root for license information.
-* ------------------------------------------------------------------------------------------ */
-
-import { CancellationToken, ClientCapabilities, Disposable, DocumentSelector, LinkedEditingRangeOptions, LinkedEditingRangeRegistrationOptions, LinkedEditingRangeRequest, LinkedEditingRanges, Position, ServerCapabilities } from 'vscode-languageserver-protocol'
+'use strict'
+import type { CancellationToken, ClientCapabilities, Disposable, DocumentSelector, LinkedEditingRangeOptions, LinkedEditingRangeRegistrationOptions, LinkedEditingRanges, Position, ServerCapabilities } from 'vscode-languageserver-protocol'
 import { TextDocument } from 'vscode-languageserver-textdocument'
 import languages from '../languages'
 import { LinkedEditingRangeProvider, ProviderResult } from '../provider'
-import { BaseLanguageClient, TextDocumentFeature } from './client'
-import * as cv from './utils/converter'
-const logger = require('../util/logger')('languageclient-linkedEditingRange')
-
-function ensure<T, K extends keyof T>(target: T, key: K): T[K] {
-  if (target[key] === void 0) {
-    target[key] = {} as any
-  }
-  return target[key]
-}
+import { LinkedEditingRangeRequest } from '../util/protocol'
+import { ensure, FeatureClient, TextDocumentLanguageFeature } from './features'
 
 export interface ProvideLinkedEditingRangeSignature {
   (this: void, document: TextDocument, position: Position, token: CancellationToken): ProviderResult<LinkedEditingRanges>
@@ -31,9 +19,9 @@ export interface LinkedEditingRangeMiddleware {
   provideLinkedEditingRange?: (this: void, document: TextDocument, position: Position, token: CancellationToken, next: ProvideLinkedEditingRangeSignature) => ProviderResult<LinkedEditingRanges>
 }
 
-export class LinkedEditingFeature extends TextDocumentFeature<boolean | LinkedEditingRangeOptions, LinkedEditingRangeRegistrationOptions, LinkedEditingRangeProvider> {
+export class LinkedEditingFeature extends TextDocumentLanguageFeature<boolean | LinkedEditingRangeOptions, LinkedEditingRangeRegistrationOptions, LinkedEditingRangeProvider, LinkedEditingRangeMiddleware> {
 
-  constructor(client: BaseLanguageClient) {
+  constructor(client: FeatureClient<LinkedEditingRangeMiddleware>) {
     super(client, LinkedEditingRangeRequest.type)
   }
 
@@ -55,12 +43,10 @@ export class LinkedEditingFeature extends TextDocumentFeature<boolean | LinkedEd
       provideLinkedEditingRanges: (document, position, token) => {
         const client = this._client
         const provideLinkedEditing: ProvideLinkedEditingRangeSignature = (document, position, token) => {
-          const params = cv.asTextDocumentPositionParams(document, position)
-          return client.sendRequest(LinkedEditingRangeRequest.type, params, token).then(result => result, error => {
-            return client.handleFailedRequest(LinkedEditingRangeRequest.type, token, error, null)
-          })
+          const params = client.code2ProtocolConverter.asTextDocumentPositionParams(document, position)
+          return this.sendRequest(LinkedEditingRangeRequest.type, params, token)
         }
-        const middleware = client.clientOptions.middleware!
+        const middleware = client.middleware!
         return middleware.provideLinkedEditingRange
           ? middleware.provideLinkedEditingRange(document, position, token, provideLinkedEditing)
           : provideLinkedEditing(document, position, token)

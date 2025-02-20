@@ -1,10 +1,13 @@
-import { spawn } from 'child_process'
+'use strict'
 import { EventEmitter } from 'events'
-import readline from 'readline'
-import { Disposable } from 'vscode-languageserver-protocol'
-import { ListItem, ListTask } from '../types'
+import { createLogger } from '../logger'
+import { ListItem, ListTask } from './types'
 import { disposeAll } from '../util'
-const logger = require('../util/logger')('list-commandTask')
+import { child_process, readline } from '../util/node'
+import type { Disposable } from '../util/protocol'
+import workspace from '../workspace'
+const spawn = child_process.spawn
+const logger = createLogger('list-commandTask')
 
 export interface CommandTaskOption {
   /**
@@ -15,7 +18,8 @@ export interface CommandTaskOption {
    * Arguments of command.
    */
   args: string[]
-  cwd: string
+  cwd?: string
+  env?: NodeJS.ProcessEnv
   /**
    * Runs for each line, return undefined for invalid item.
    */
@@ -31,7 +35,7 @@ export default class CommandTask extends EventEmitter implements ListTask {
 
   private start(): void {
     let { cmd, args, cwd, onLine } = this.opt
-    let proc = spawn(cmd, args, { cwd, windowsHide: true })
+    let proc = spawn(cmd, args, { cwd: cwd || workspace.cwd, windowsHide: true, shell: process.platform === 'win32' })
     this.disposables.push({
       dispose: () => {
         proc.kill()

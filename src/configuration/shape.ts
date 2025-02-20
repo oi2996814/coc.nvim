@@ -1,47 +1,51 @@
-import { Neovim } from '@chemzqm/neovim'
-import fs from 'fs'
+'use strict'
 import { applyEdits, modify } from 'jsonc-parser'
-import path from 'path'
-import { FormattingOptions } from 'vscode-languageserver-types'
+import { WorkspaceFolder } from 'vscode-languageserver-types'
 import { URI } from 'vscode-uri'
-import { ConfigurationShape, ConfigurationTarget, IWorkspace } from '../types'
-import { CONFIG_FILE_NAME } from '../util'
-const logger = require('../util/logger')('configuration-shape')
+import { createLogger } from '../logger'
+import { fs, path } from '../util/node'
+const logger = createLogger('configuration-shape')
 
-export default class ConfigurationProxy implements ConfigurationShape {
+interface IFolderController {
+  root?: string
+  getWorkspaceFolder?: (resource: string) => WorkspaceFolder
+}
+export interface IConfigurationShape {
+  root?: string
+  /**
+   * Resolve possible workspace config from resource.
+   */
+  getWorkspaceFolder?(resource?: string): URI | undefined
+  modifyConfiguration(fsPath: string, key: string, value?: any): Promise<void>
+}
 
-  constructor(private workspace: IWorkspace) {
+export default class ConfigurationProxy implements IConfigurationShape {
+
+  constructor(private resolver: IFolderController, private _test = global.__TEST__) {
   }
 
-  private get nvim(): Neovim {
-    return this.workspace.nvim
+  public get root(): string | undefined {
+    return this.resolver.root
   }
 
-  private async modifyConfiguration(target: ConfigurationTarget, key: string, value?: any): Promise<void> {
-    let { nvim, workspace } = this
-    let file = workspace.getConfigFile(target)
-    if (!file) return
-    let formattingOptions: FormattingOptions = { tabSize: 2, insertSpaces: true }
-    let content = fs.readFileSync(file, { encoding: 'utf8', flag: 'a+'})
-    value = value == null ? undefined : value
+  public async modifyConfiguration(fsPath: string, key: string, value?: any): Promise<void> {
+    if (this._test) return
+    logger.info(`modify configuration file: ${fsPath}`, key, value)
+    let dir = path.dirname(fsPath)
+    let formattingOptions = { tabSize: 2, insertSpaces: true }
+    if (!fs.existsSync(dir)) fs.mkdirSync(dir, { recursive: true })
+    let content = fs.readFileSync(fsPath, { flag: 'a+' }).toString('utf8')
+    content = content || '{}'
     let edits = modify(content, [key], value, { formattingOptions })
     content = applyEdits(content, edits)
-    fs.writeFileSync(file, content, 'utf8')
-    let doc = workspace.getDocument(URI.file(file).toString())
-    if (doc) nvim.command('checktime', true)
-    return
+    fs.writeFileSync(fsPath, content, { encoding: 'utf8' })
   }
 
-  public get workspaceConfigFile(): string {
-    let folder = path.join(this.workspace.root, '.vim')
-    return path.join(folder, CONFIG_FILE_NAME)
-  }
-
-  public $updateConfigurationOption(target: ConfigurationTarget, key: string, value: any): void {
-    this.modifyConfiguration(target, key, value).logError()
-  }
-
-  public $removeConfigurationOption(target: ConfigurationTarget, key: string): void {
-    this.modifyConfiguration(target, key).logError()
+  public getWorkspaceFolder(resource: string): URI | undefined {
+    if (typeof this.resolver.getWorkspaceFolder === 'function') {
+      let workspaceFolder = this.resolver.getWorkspaceFolder(resource)
+      if (workspaceFolder) return URI.parse(workspaceFolder.uri)
+    }
+    return undefined
   }
 }

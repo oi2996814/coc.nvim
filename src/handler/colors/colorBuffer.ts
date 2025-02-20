@@ -1,34 +1,87 @@
-import { Buffer, Neovim } from '@chemzqm/neovim'
-import debounce from 'debounce'
-import { CancellationToken, CancellationTokenSource, Color, ColorInformation, Position, Range } from 'vscode-languageserver-protocol'
-import languages from '../../languages'
+'use strict'
+import { Buffer, Neovim } from '../../neovim'
+import { Color, ColorInformation, Position, Range } from 'vscode-languageserver-types'
+import languages, { ProviderName } from '../../languages'
 import { SyncItem } from '../../model/bufferSync'
-import { group } from '../../util/array'
-import { equals } from '../../util/object'
-import { positionInRange } from '../../util/position'
-import { isDark, toHexColor, toHexString } from '../../util/color'
+import Document from '../../model/document'
+import { HighlightItem } from '../../types'
+import { getConditionValue } from '../../util'
+import { isDark, toHexString } from '../../util/color'
+import * as Is from '../../util/is'
+import { debounce } from '../../util/node'
+import { comparePosition, positionInRange } from '../../util/position'
+import { CancellationTokenSource } from '../../util/protocol'
+import window from '../../window'
 import workspace from '../../workspace'
-const logger = require('../../util/logger')('colors-buffer')
+const NAMESPACE = 'color'
 
 export interface ColorRanges {
   color: Color
   ranges: Range[]
 }
 
+export interface ColorConfig {
+  filetypes: string[] | null
+  highlightPriority: number
+}
+
+const debounceTime = getConditionValue(200, 10)
+
 export default class ColorBuffer implements SyncItem {
   private _colors: ColorInformation[] = []
-  private tokenSource: CancellationTokenSource
-  private version: number
+  private tokenSource: CancellationTokenSource | undefined
   public highlight: Function & { clear(): void }
+  private _enable: boolean | undefined
   // last highlight version
   constructor(
     private nvim: Neovim,
-    private bufnr: number,
-    private enabled: boolean,
+    public readonly doc: Document,
+    private config: ColorConfig,
     private usedColors: Set<string>) {
     this.highlight = debounce(() => {
       void this.doHighlight()
-    }, global.hasOwnProperty('__TEST__') ? 10 : 500)
+    }, debounceTime)
+    if (this.hasProvider) this.highlight()
+  }
+
+  public get enable(): boolean {
+    if (Is.boolean(this._enable)) return this._enable
+    this._enable = workspace.getConfiguration('colors', this.doc).get('enable', false)
+    return this._enable
+  }
+
+  public updateDocumentConfig(): void {
+    let enable = this.enabled
+    this._enable = workspace.getConfiguration('colors', this.doc).get('enable', false)
+    if (enable != this.enabled) {
+      if (enable) {
+        this.clearHighlight()
+      } else {
+        void this.doHighlight()
+      }
+    }
+  }
+
+  public toggle(): void {
+    if (this._enable) {
+      this._enable = false
+      this.clearHighlight()
+    } else {
+      this._enable = true
+      void this.doHighlight()
+    }
+  }
+
+  private get hasProvider(): boolean {
+    return languages.hasProvider(ProviderName.DocumentColor, this.doc)
+  }
+
+  public get enabled(): boolean {
+    let { filetypes } = this.config
+    let { filetype } = this.doc
+    if (!this.hasProvider) return false
+    if (Array.isArray(filetypes) && (filetypes.includes('*') || filetypes.includes(filetype))) return true
+    return this.enable
   }
 
   public onChange(): void {
@@ -37,7 +90,7 @@ export default class ColorBuffer implements SyncItem {
   }
 
   public get buffer(): Buffer {
-    return this.nvim.createBuffer(this.bufnr)
+    return this.doc.buffer
   }
 
   public get colors(): ColorInformation[] {
@@ -48,59 +101,28 @@ export default class ColorBuffer implements SyncItem {
     return this._colors.length > 0
   }
 
-  public setState(enabled: boolean): void {
-    this.enabled = enabled
-    if (enabled) {
-      this.highlight()
-    } else {
-      this.clearHighlight()
-    }
-  }
-
   public async doHighlight(): Promise<void> {
-    let doc = workspace.getDocument(this.bufnr)
-    if (!doc || !this.enabled) return
-    try {
-      this.tokenSource = new CancellationTokenSource()
-      let { token } = this.tokenSource
-      if (this.version && doc.version == this.version) return
-      let { version } = doc
-      let colors: ColorInformation[]
-      colors = await languages.provideDocumentColors(doc.textDocument, token)
-      colors = colors || []
-      if (token.isCancellationRequested) return
-      this.version = version
-      await this.addHighlight(colors)
-    } catch (e) {
-      logger.error('Error on highlight:', e)
-    }
-  }
-
-  private async addHighlight(colors: ColorInformation[]): Promise<void> {
+    if (!this.enabled) return
+    let { nvim, doc } = this
+    this.tokenSource = new CancellationTokenSource()
+    let { token } = this.tokenSource
+    let colors: ColorInformation[]
+    colors = await languages.provideDocumentColors(doc.textDocument, token)
+    if (token.isCancellationRequested) return
     colors = colors || []
-    if (equals(this._colors, colors)) return
-    let { nvim } = this
+    colors.sort((a, b) => comparePosition(a.range.start, b.range.start))
     this._colors = colors
-    // improve performance
-    let groups = group(colors, 100)
+    let items: HighlightItem[] = []
+    colors.forEach(o => {
+      let hlGroup = getHighlightGroup(o.color)
+      doc.addHighlights(items, hlGroup, o.range, { combine: false })
+    })
+    let diff = await window.diffHighlights(doc.bufnr, NAMESPACE, items)
+    if (token.isCancellationRequested || !diff) return
     nvim.pauseNotification()
-    this.buffer.clearNamespace('color')
     this.defineColors(colors)
-    void nvim.resumeNotification(false, true)
-    for (let colors of groups) {
-      nvim.pauseNotification()
-      let colorRanges = this.getColorRanges(colors)
-      for (let o of colorRanges) {
-        this.highlightColor(o.ranges, o.color)
-      }
-      void nvim.resumeNotification(false, true)
-    }
-    if (workspace.isVim) this.nvim.command('redraw', true)
-  }
-
-  private highlightColor(ranges: Range[], color: Color): void {
-    let hlGroup = `BG${toHexString(color)}`
-    this.buffer.highlightRanges('color', hlGroup, ranges)
+    nvim.resumeNotification(false, true)
+    await window.applyDiffHighlights(doc.bufnr, NAMESPACE, this.config.highlightPriority, diff, true)
   }
 
   private defineColors(colors: ColorInformation[]): void {
@@ -113,34 +135,14 @@ export default class ColorBuffer implements SyncItem {
     }
   }
 
-  private getColorRanges(infos: ColorInformation[]): ColorRanges[] {
-    let res: ColorRanges[] = []
-    for (let info of infos) {
-      let { color, range } = info
-      let idx = res.findIndex(o => equals(toHexColor(o.color), toHexColor(color)))
-      if (idx == -1) {
-        res.push({
-          color,
-          ranges: [range]
-        })
-      } else {
-        let r = res[idx]
-        r.ranges.push(range)
-      }
-    }
-    return res
+  public hasColorAtPosition(position: Position): boolean {
+    return this.colors.some(o => positionInRange(position, o.range) == 0)
   }
 
   public clearHighlight(): void {
     this.highlight.clear()
     this._colors = []
-    this.version = null
     this.buffer.clearNamespace('color')
-  }
-
-  public hasColorAtPosition(position: Position): boolean {
-    let { colors } = this
-    return colors.some(o => positionInRange(position, o.range) == 0)
   }
 
   public cancel(): void {
@@ -151,7 +153,12 @@ export default class ColorBuffer implements SyncItem {
   }
 
   public dispose(): void {
+    this._colors = []
     this.highlight.clear()
     this.cancel()
   }
+}
+
+function getHighlightGroup(color: Color): string {
+  return `BG${toHexString(color)}`
 }

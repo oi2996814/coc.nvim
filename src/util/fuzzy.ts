@@ -1,8 +1,11 @@
+'use strict'
+import { ASCII_END } from './constants'
 
-export function getCharCodes(str: string): number[] {
-  let res = []
-  for (let i = 0, l = str.length; i < l; i++) {
-    res.push(str.charCodeAt(i))
+export function getCharCodes(str: string): Uint16Array {
+  let len = str.length
+  let res = new Uint16Array(len)
+  for (let i = 0, l = len; i < l; i++) {
+    res[i] = str.charCodeAt(i)
   }
   return res
 }
@@ -11,38 +14,49 @@ export function wordChar(ch: number): boolean {
   return (ch >= 97 && ch <= 122) || (ch >= 65 && ch <= 90)
 }
 
-export function caseMatch(input: number, code: number): boolean {
-  if (input == code) return true
-  if (input >= 97 && input <= 122 && code + 32 === input) return true
+export function caseMatch(input: number, code: number, ignorecase = false): boolean {
+  if (input === code) return true
+  if (code < ASCII_END) {
+    if (input >= 97 && input <= 122 && code + 32 === input) return true
+    if (ignorecase) {
+      if (input <= 90 && input + 32 === code) return true
+      if (toLower(input) === code) return true
+    }
+  } else {
+    let lower = toLower(code)
+    if (lower === input || (ignorecase && toLower(input) === lower)) return true
+  }
   return false
 }
 
-export function fuzzyChar(a: string, b: string): boolean {
+function toLower(code: number): number {
+  return String.fromCharCode(code).toLowerCase().charCodeAt(0)
+}
+
+export function fuzzyChar(a: string, b: string, ignorecase = false): boolean {
   let ca = a.charCodeAt(0)
   let cb = b.charCodeAt(0)
-  if (ca === cb) return true
-  if (ca >= 97 && ca <= 122 && cb + 32 === ca) return true
-  return false
+  return caseMatch(ca, cb, ignorecase)
 }
 
 // upper case must match, lower case ignore case
-export function fuzzyMatch(needle: number[], text: string): boolean {
+export function fuzzyMatch(needle: ArrayLike<number>, text: string, ignorecase = false): boolean {
   let totalCount = needle.length
-  if (needle.length > text.length) return false
+  let tl = text.length
+  if (totalCount > tl) return false
   let i = 0
-  for (let j = 0; j < text.length; j++) {
-    if (i === totalCount) break
+  let curr = needle[0]
+  for (let j = 0; j < tl; j++) {
     let code = text.charCodeAt(j)
-    let m = needle[i]
-    if (code === m) {
+    if (caseMatch(curr, code, ignorecase)) {
       i = i + 1
+      curr = needle[i]
+      if (i === totalCount) return true
       continue
     }
-    // upper case match lower case
-    if ((m >= 97 && m <= 122) && code + 32 === m) {
-      i = i + 1
-      continue
+    if (tl - j - 1 < totalCount - i) {
+      break
     }
   }
-  return i === totalCount
+  return false
 }

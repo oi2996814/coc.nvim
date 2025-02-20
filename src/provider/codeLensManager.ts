@@ -1,53 +1,54 @@
-import { CancellationToken, CodeLens, Disposable, DocumentSelector } from 'vscode-languageserver-protocol'
-import { TextDocument } from 'vscode-languageserver-textdocument'
-import { CodeLensProvider } from './index'
-import Manager, { ProviderItem } from './manager'
+'use strict'
 import { v4 as uuid } from 'uuid'
+import { CancellationToken, Disposable } from '../util/protocol'
+import type { CodeLens } from 'vscode-languageserver-types'
+import { TextDocument } from 'vscode-languageserver-textdocument'
 import { omit } from '../util/lodash'
-// const logger = require('../util/logger')('codeActionManager')
+import { CodeLensProvider, DocumentSelector } from './index'
+import Manager from './manager'
+import { isCommand } from '../util/is'
+
+interface CodeLensWithSource extends CodeLens {
+  source?: string
+}
 
 export default class CodeLensManager extends Manager<CodeLensProvider> {
 
   public register(selector: DocumentSelector, provider: CodeLensProvider): Disposable {
-    let item: ProviderItem<CodeLensProvider> = {
+    return this.addProvider({
       id: uuid(),
       selector,
       provider
-    }
-    this.providers.add(item)
-    return Disposable.create(() => {
-      this.providers.delete(item)
     })
   }
 
   public async provideCodeLenses(
     document: TextDocument,
     token: CancellationToken
-  ): Promise<CodeLens[] | null> {
+  ): Promise<CodeLensWithSource[] | null> {
     let providers = this.getProviders(document)
-    if (!providers.length) return null
-    let arr = await Promise.all(providers.map(item => {
+    let codeLens: CodeLens[] = []
+    let results = await Promise.allSettled(providers.map(item => {
       let { provider, id } = item
       return Promise.resolve(provider.provideCodeLenses(document, token)).then(res => {
         if (Array.isArray(res)) {
           for (let item of res) {
-            (item as any).source = id
+            codeLens.push(Object.assign({ source: id }, item))
           }
         }
-        return res
       })
     }))
-    return [].concat(...arr)
+    this.handleResults(results, 'provideCodeLenses')
+    return codeLens
   }
 
   public async resolveCodeLens(
-    codeLens: CodeLens,
+    codeLens: CodeLensWithSource,
     token: CancellationToken
   ): Promise<CodeLens> {
     // no need to resolve
-    if (codeLens.command) return codeLens
-    let { source } = codeLens as any
-    let provider = this.getProviderById(source)
+    if (isCommand(codeLens.command)) return codeLens
+    let provider = this.getProviderById(codeLens.source)
     if (!provider || typeof provider.resolveCodeLens != 'function') {
       return codeLens
     }

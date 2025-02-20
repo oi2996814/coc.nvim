@@ -27,18 +27,17 @@ If this seems like a lot or you aren't able to do all this setup, you might also
 If you want to go the usual route and run the project locally, though:
 
 - [Install Node.js](https://nodejs.org/en/download/)
-- [Install Yarn](https://yarnpkg.com)
 - [Fork the project](https://guides.github.com/activities/forking/#fork)
 
 Then in your terminal:
 
 - Add coc.nvim to your vim's rtp by `set runtimepath^=/path/to/coc.nvim`
 - `cd path/to/your/coc.nvim`
-- `yarn install`
+- `npm install`
 - Install [coc-tsserver](https://github.com/neoclide/coc-tsserver) by
   `:CocInstall coc-tsserver` in your vim
-- Install [coc-tslint-plugin](https://github.com/neoclide/coc-tslint-plugin) by
-  `:CocInstall coc-tslint-plugin` in your vim.
+- Install [coc-eslint](https://github.com/neoclide/coc-eslint) by
+  `:CocInstall coc-eslint` in your vim.
 
 And you should be ready to go!
 
@@ -72,10 +71,10 @@ To contribute code:
 - [Set up the project](#project-setup).
 - Make any necessary changes to the source code.
 - Include any [additional documentation](#contribute-documentation) the changes might need.
-- Make sure the code doesn't have lint issue by command `yarn lint` in your
+- Make sure the code doesn't have lint issue by command `npm run lint` in your
   terminal.
 - Write tests that verify that your contribution works as expected when necessary.
-- Make sure all tests passed by command `yarn jest` in your terminal.
+- Make sure all tests passed by command `npm test` in your terminal.
 - Write clear, concise commit message(s) using [conventional-changelog format](https://github.com/conventional-changelog/conventional-changelog-angular/blob/master/convention.md).
 - Dependency updates, additions, or removals must be in individual commits, and the message must use the format: `<prefix>(deps): PKG@VERSION`, where `<prefix>` is any of the usual `conventional-changelog` prefixes, at your discretion.
 - Go to https://github.com/neoclide/coc.nvim/pulls and open a new pull request with your changes.
@@ -86,8 +85,8 @@ Once you've filed the PR:
 - Barring special circumstances, maintainers will not review PRs until all checks pass (Travis, AppVeyor, etc).
 - One or more maintainers will use GitHub's review feature to review your PR.
 - If the maintainer asks for any changes, edit your changes, push, and ask for another review. Additional tags (such as `needs-tests`) will be added depending on the review.
-- If the maintainer decides to pass on your PR, they will thank you for the contribution and explain why they won't be accepting the changes. That's ok! We still really appreciate you taking the time to do it, and we don't take that lightly. 💚
-- If your PR gets accepted, it will be marked as such, and merged into the `latest` branch soon after. Your contribution will be distributed to the masses next time the maintainers [tag a release](#tag-a-release)
+- If the maintainer decides not to pass on your PR, they will thank you for the contribution and explain why they won't be accepting the changes. Please don't feel offended. We still really appreciate you taking the time to do it, and we don't take that lightly. 💚
+- If your PR gets accepted, it will be marked as such, and merged into the `latest` branch soon after. Your contribution will be distributed to the masses next time the maintainers tag a release
 
 ## Provide Support on Issues
 
@@ -137,6 +136,6 @@ You can spot a collaborator on the repo by looking for the `[Collaborator]` or `
 
 | Permission    | Description                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
 | ------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| Issue Tracker | Granted to contributors who express a strong interest in spending time on the project's issue tracker. These tasks are mainly [labeling issues](#label-issues), [cleaning up old ones](#clean-up-issues-and-prs), and [reviewing pull requests](#review-pull-requests), as well as all the usual things non-team-member contributors can do. Issue handlers should not merge pull requests, tag releases, or directly commit code themselves: that should still be done through the usual pull request process. Becoming an Issue Handler means the project team trusts you to understand enough of the team's process and context to implement it on the issue tracker. |
+| Issue Tracker | Granted to contributors who express a strong interest in spending time on the project's issue tracker. These tasks are mainly labeling issues, cleaning up old ones, and [reviewing pull requests](#review-pull-requests), as well as all the usual things non-team-member contributors can do. Issue handlers should not merge pull requests, tag releases, or directly commit code themselves: that should still be done through the usual pull request process. Becoming an Issue Handler means the project team trusts you to understand enough of the team's process and context to implement it on the issue tracker. |
 | Committer     | Granted to contributors who want to handle the actual pull request merges, tagging new versions, etc. Committers should have a good level of familiarity with the codebase, and enough context to understand the implications of various changes, as well as a good sense of the will and expectations of the project team.                                                                                                                                                                                                                                                                                                                                              |
 | Admin/Owner   | Granted to people ultimately responsible for the project, its community, etc.                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                            |

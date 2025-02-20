@@ -1,8 +1,8 @@
-import { Neovim } from '@chemzqm/neovim'
+'use strict'
 import services from '../../services'
-import { ListContext, ListItem } from '../../types'
-import BasicList from '../basic'
+import { ListContext, ListItem } from '../types'
 import { wait } from '../../util'
+import BasicList from '../basic'
 import { formatListItems } from '../formatting'
 
 export default class ServicesList extends BasicList {
@@ -10,19 +10,18 @@ export default class ServicesList extends BasicList {
   public description = 'registered services of coc.nvim'
   public name = 'services'
 
-  constructor(nvim: Neovim) {
-    super(nvim)
+  constructor() {
+    super()
 
     this.addAction('toggle', async item => {
       let { id } = item.data
       await services.toggle(id)
-      await wait(100)
+      await wait(50)
     }, { persist: true, reload: true })
   }
 
   public async loadItems(_context: ListContext): Promise<ListItem[]> {
     let stats = services.getServiceStats()
-    stats.sort((a, b) => a.id > b.id ? -1 : 1)
     return formatListItems(this.alignColumns, stats.map(stat => {
       let prefix = stat.state == 'running' ? '*' : ' '
       return {
@@ -43,8 +42,6 @@ export default class ServicesList extends BasicList {
     nvim.command('highlight default link CocServicesName Type', true)
     nvim.command('highlight default link CocServicesStat Statement', true)
     nvim.command('highlight default link CocServicesLanguages Comment', true)
-    nvim.resumeNotification().catch(_e => {
-      // noop
-    })
+    nvim.resumeNotification(false, true)
   }
 }

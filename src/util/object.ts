@@ -1,9 +1,50 @@
+'use strict'
 import * as Is from './is'
 
 export function isEmpty(obj: object | null | undefined): boolean {
   if (!obj) return true
   if (Array.isArray(obj)) return obj.length == 0
   return Object.keys(obj).length == 0
+}
+
+export function toObject<T>(obj: T | null | undefined): Partial<T> {
+  return obj == null ? {} : obj
+}
+
+export function omitUndefined(obj: object): object {
+  const result: any = {}
+  Object.entries(obj).forEach(([key, val]) => {
+    if (val !== undefined) result[key] = val
+  })
+  return result
+}
+
+export function deepIterate(obj: object, fn: (node: object, key: string) => void): object {
+  Object.entries(obj).forEach(([key, val]) => {
+    fn(obj, key)
+    if (Array.isArray(val)) {
+      val.forEach(node => {
+        if (Is.objectLiteral(node)) {
+          deepIterate(node, fn)
+        }
+      })
+    } else if (Is.objectLiteral(val)) {
+      deepIterate(val, fn)
+    }
+  })
+  return obj
+}
+
+export function toReadonly<T extends object>(obj: T): T {
+  const result = {}
+  for (let key of Object.keys(obj)) {
+    Object.defineProperty(result, key, {
+      value: obj[key],
+      writable: false,
+      enumerable: true
+    })
+  }
+  return result as T
 }
 
 export function deepClone<T>(obj: T): T {
@@ -27,6 +68,10 @@ export function deepClone<T>(obj: T): T {
 
 const _hasOwnProperty = Object.prototype.hasOwnProperty
 
+export function hasOwnProperty(obj: any, key: string): boolean {
+  return _hasOwnProperty.call(obj, key)
+}
+
 export function deepFreeze<T>(obj: T): T {
   if (!obj || typeof obj !== 'object') {
     return obj
@@ -35,12 +80,10 @@ export function deepFreeze<T>(obj: T): T {
   while (stack.length > 0) {
     let obj = stack.shift()
     Object.freeze(obj)
-    for (const key in obj) {
-      if (_hasOwnProperty.call(obj, key)) {
-        let prop = obj[key]
-        if (typeof prop === 'object' && !Object.isFrozen(prop)) {
-          stack.push(prop)
-        }
+    for (const key of Object.keys(obj)) {
+      let prop = obj[key]
+      if (typeof prop === 'object' && !Object.isFrozen(prop)) {
+        stack.push(prop)
       }
     }
   }

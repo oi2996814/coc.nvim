@@ -1,13 +1,13 @@
-import { Neovim } from '@chemzqm/neovim'
-import manager from '../../list/manager'
-import { parseInput } from '../../list/worker'
-import helper from '../helper'
-import { ListContext, ListTask, ListItem } from '../../types'
-import { CancellationToken, Disposable } from 'vscode-languageserver-protocol'
+import { Neovim } from '../../neovim'
+import styles from 'ansi-styles'
 import { EventEmitter } from 'events'
-import colors from 'colors/safe'
+import { CancellationToken, Disposable } from 'vscode-languageserver-protocol'
 import BasicList from '../../list/basic'
+import manager from '../../list/manager'
+import { ListContext, ListItem, ListTask } from '../../list/types'
+import { convertItemLabel, indexOf, parseInput, toInputs } from '../../list/worker'
 import { disposeAll } from '../../util'
+import helper from '../helper'
 
 let items: ListItem[] = []
 
@@ -15,6 +15,17 @@ class DataList extends BasicList {
   public name = 'data'
   public loadItems(): Promise<ListItem[]> {
     return Promise.resolve(items)
+  }
+}
+
+class EmptyList extends BasicList {
+  public name = 'empty'
+  public loadItems(): Promise<ListItem[]> {
+    let emitter: any = new EventEmitter()
+    setTimeout(() => {
+      emitter.emit('end')
+    }, 20)
+    return emitter
   }
 }
 
@@ -27,7 +38,7 @@ class IntervalTaskList extends BasicList {
     let interval = setInterval(() => {
       emitter.emit('data', { label: i.toFixed() })
       i++
-    }, 50)
+    }, 20)
     emitter.dispose = () => {
       clearInterval(interval)
       emitter.emit('end')
@@ -48,11 +59,11 @@ class DelayTask extends BasicList {
     setTimeout(() => {
       if (disposed) return
       emitter.emit('data', { label: 'ahead' })
-    }, 100)
+    }, 10)
     setTimeout(() => {
       if (disposed) return
       emitter.emit('data', { label: 'abort' })
-    }, 200)
+    }, 20)
     emitter.dispose = () => {
       disposed = true
       emitter.emit('end')
@@ -69,7 +80,7 @@ class InteractiveList extends BasicList {
   public interactive = true
   public loadItems(context: ListContext, _token: CancellationToken): Promise<ListItem[]> {
     return Promise.resolve([{
-      label: colors.magenta(context.input || '')
+      label: styles.magenta.open + (context.input || '') + styles.magenta.close
     }])
   }
 }
@@ -113,26 +124,50 @@ afterEach(async () => {
   await helper.reset()
 })
 
-describe('parseInput', () => {
-  it('should parse input with space', async () => {
-    let res = parseInput('a b')
-    expect(res).toEqual(['a', 'b'])
+describe('util', () => {
+  it('should get index', () => {
+    expect(indexOf('Abc', 'a', true, false)).toBe(0)
+    expect(indexOf('Abc', 'A', false, false)).toBe(0)
+    expect(indexOf('abc', 'A', false, true)).toBe(0)
   })
 
-  it('should parse input with escaped space', async () => {
+  it('should parse input with space', () => {
+    let res = parseInput('a b')
+    expect(res).toEqual(['a', 'b'])
+    res = parseInput('a b ')
+    expect(res).toEqual(['a', 'b'])
+    res = parseInput('ab ')
+    expect(res).toEqual(['ab'])
+  })
+
+  it('should parse input with escaped space', () => {
     let res = parseInput('a\\ b')
     expect(res).toEqual(['a b'])
+  })
+
+  it('should convert item label', () => {
+    expect(convertItemLabel({ label: 'foo\nbar\nx' }).label).toBe('foo')
+    const redOpen = '\x1B[31m'
+    const redClose = '\x1B[39m'
+    let label = redOpen + 'foo' + redClose
+    expect(convertItemLabel({ label }).label).toBe('foo')
+  })
+
+  it('should convert input', () => {
+    expect(toInputs('foo bar', false)).toEqual(['foo bar'])
   })
 })
 
 describe('list worker', () => {
 
   it('should work with long running task', async () => {
-    disposables.push(manager.registerList(new IntervalTaskList(nvim)))
+    disposables.push(manager.registerList(new IntervalTaskList()))
     await manager.start(['task'])
-    await helper.wait(300)
-    let len = manager.session?.length
-    expect(len > 2).toBe(true)
+    await manager.session.worker.drawItems()
+    await manager.session.ui.ready
+    await helper.waitValue(() => {
+      return manager.session?.length > 2
+    }, true)
     await manager.cancel()
   })
 
@@ -144,61 +179,71 @@ describe('list worker', () => {
       label: 'ade',
       sortText: 'a'
     }]
-    disposables.push(manager.registerList(new DataList(nvim)))
+    disposables.push(manager.registerList(new DataList()))
     await manager.start(['data'])
-    await helper.wait(100)
-    await nvim.input('a')
-    await helper.wait(100)
-    let buf = await nvim.buffer
-    let lines = await buf.lines
-    expect(lines).toEqual(['ade', 'abc'])
+    await manager.session.ui.ready
+    await helper.listInput('a')
+    await helper.waitFor('getline', ['.'], 'ade')
+    await manager.cancel()
+  })
+
+  it('should ready with undefined result', async () => {
+    items = undefined
+    disposables.push(manager.registerList(new DataList()))
+    await manager.start(['data'])
+    await manager.session.ui.ready
+    await manager.cancel()
+  })
+
+  it('should show empty line for empty task', async () => {
+    disposables.push(manager.registerList(new EmptyList()))
+    await manager.start(['empty'])
+    await manager.session.ui.ready
+    let line = await nvim.call('getline', [1])
+    expect(line).toMatch('No results')
     await manager.cancel()
   })
 
   it('should cancel task by use CancellationToken', async () => {
-    disposables.push(manager.registerList(new IntervalTaskList(nvim)))
+    disposables.push(manager.registerList(new IntervalTaskList()))
     await manager.start(['task'])
     expect(manager.session?.worker.isLoading).toBe(true)
-    await helper.wait(100)
+    await helper.listInput('1')
+    await helper.wait(50)
     manager.session?.stop()
     expect(manager.session?.worker.isLoading).toBe(false)
   })
 
   it('should render slow interactive list', async () => {
-    disposables.push(manager.registerList(new DelayTask(nvim)))
+    disposables.push(manager.registerList(new DelayTask()))
     await manager.start(['delay'])
-    await nvim.input('a')
-    await helper.wait(600)
-    let buf = await nvim.buffer
-    let lines = await buf.lines
-    expect(lines).toEqual(['ahead', 'abort'])
+    await helper.listInput('a')
+    await helper.waitFor('getline', [2], 'abort')
   })
 
   it('should work with interactive list', async () => {
-    disposables.push(manager.registerList(new InteractiveList(nvim)))
+    disposables.push(manager.registerList(new InteractiveList()))
     await manager.start(['-I', 'test'])
     await manager.session?.ui.ready
     expect(manager.isActivated).toBe(true)
-    await nvim.eval('feedkeys("f", "in")')
-    await helper.wait(100)
-    await nvim.eval('feedkeys("a", "in")')
-    await helper.wait(100)
-    await nvim.eval('feedkeys("x", "in")')
-    await helper.wait(300)
-    let item = await manager.session?.ui.item
-    expect(item.label).toBe('fax')
+    await helper.listInput('f')
+    await helper.listInput('a')
+    await helper.listInput('x')
+    await helper.waitFor('getline', ['.'], 'fax')
+    await manager.cancel(true)
   })
 
   it('should not activate on load error', async () => {
-    disposables.push(manager.registerList(new ErrorList(nvim)))
+    disposables.push(manager.registerList(new ErrorList()))
     await manager.start(['test'])
     expect(manager.isActivated).toBe(false)
   })
 
   it('should deactivate on task error', async () => {
-    disposables.push(manager.registerList(new ErrorTaskList(nvim)))
+    disposables.push(manager.registerList(new ErrorTaskList()))
     await manager.start(['task'])
-    await helper.wait(500)
-    expect(manager.isActivated).toBe(false)
+    await helper.waitValue(() => {
+      return manager.isActivated
+    }, false)
   })
 })

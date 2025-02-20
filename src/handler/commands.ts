@@ -1,28 +1,27 @@
-import { Neovim } from '@chemzqm/neovim'
+'use strict'
+import { Neovim } from '../neovim'
 import commandManager from '../commands'
-import events from '../events'
-import { Env } from '../types'
 import listManager from '../list/manager'
-const logger = require('../util/logger')('handler-commands')
-const isVim = process.env.VIM_NODE_RPC == '1'
+import workspace from '../workspace'
+import * as Is from '../util/is'
 
-interface CommandItem {
-  id: string
-  title: string
+function validCommand(command: any): boolean {
+  return command && Is.string(command.id) && Is.string(command.cmd) && command.id.length > 0 && command.cmd.length > 0
 }
 
 export default class Commands {
-  constructor(private nvim: Neovim, private env: Readonly<Env>) {
-    for (let item of env.vimCommands) {
+  constructor(private nvim: Neovim) {
+    for (let item of workspace.env.vimCommands) {
       this.addVimCommand(item)
     }
   }
 
   public addVimCommand(cmd: { id: string; cmd: string; title?: string }): void {
+    if (!validCommand(cmd)) return
     let id = `vim.${cmd.id}`
     commandManager.registerCommand(id, () => {
       this.nvim.command(cmd.cmd, true)
-      if (isVim) this.nvim.command('redraw', true)
+      this.nvim.redrawVim()
     })
     if (cmd.title) commandManager.titles.set(id, cmd.title)
   }
@@ -35,30 +34,8 @@ export default class Commands {
     await commandManager.repeatCommand()
   }
 
-  public async runCommand(id?: string, ...args: any[]): Promise<any> {
-    if (id) {
-      // needed to load onCommand extensions
-      await events.fire('Command', [id])
-      let res = await commandManager.executeCommand(id, ...args)
-      if (args.length == 0) {
-        await commandManager.addRecent(id)
-      }
-      return res
-    } else {
-      await listManager.start(['commands'])
-    }
-  }
-
-  public getCommands(): CommandItem[] {
-    let list = commandManager.commandList
-    let res: CommandItem[] = []
-    let { titles } = commandManager
-    for (let item of list) {
-      res.push({
-        id: item.id,
-        title: titles.get(item.id) || ''
-      })
-    }
-    return res
+  public async runCommand(id?: string, ...args: any[]): Promise<unknown> {
+    if (id) return await commandManager.fireCommand(id, ...args)
+    await listManager.start(['commands'])
   }
 }

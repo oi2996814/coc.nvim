@@ -29,6 +29,8 @@ let s:char_map = {
       \ "\<LeftDrag>": '<LeftDrag>',
       \ "\<LeftRelease>": '<LeftRelease>',
       \ "\<2-LeftMouse>": '<2-LeftMouse>',
+      \ "\<C-space>": '<C-space>',
+      \ "\<C-_>": '<C-_>',
       \ "\<C-a>": '<C-a>',
       \ "\<C-b>": '<C-b>',
       \ "\<C-c>": '<C-c>',
@@ -83,7 +85,7 @@ let s:char_map = {
 
 function! coc#prompt#getc() abort
   let c = getchar()
-  return type(c) == type(0) ? nr2char(c) : c
+  return type(c) is 0 ? nr2char(c) : c
 endfunction
 
 function! coc#prompt#getchar() abort
@@ -92,9 +94,13 @@ function! coc#prompt#getchar() abort
     return input
   endif
   "a language keymap is activated, so input must be resolved to the mapped values.
-  let partial_keymap = mapcheck(input, "l")
-  while partial_keymap !=# ""
-    let full_keymap = maparg(input, "l")
+  let partial_keymap = mapcheck(input, 'l')
+  while partial_keymap !=# ''
+    let dict = maparg(input, 'l', 0, 1)
+    if empty(dict) || get(dict, 'expr', 0)
+      return input
+    endif
+    let full_keymap = get(dict, 'rhs', '')
     if full_keymap ==# "" && len(input) >= 3 "HACK: assume there are no keymaps longer than 3.
       return input
     elseif full_keymap ==# partial_keymap
@@ -109,7 +115,7 @@ function! coc#prompt#getchar() abort
       return input
     endif
     let input .= c
-    let partial_keymap = mapcheck(input, "l")
+    let partial_keymap = mapcheck(input, 'l')
   endwhile
   return input
 endfunction
@@ -133,7 +139,7 @@ function! s:start_prompt()
   if s:activated | return | endif
   if !get(g:, 'coc_disable_transparent_cursor', 0)
     if s:gui
-      if has('nvim-0.5.0') && !empty(s:saved_cursor)
+      if has('nvim') && !empty(s:saved_cursor)
         set guicursor+=a:ver1-CocCursorTransparent/lCursor
       endif
     elseif s:is_vim
@@ -161,7 +167,9 @@ function! s:start_prompt()
     endwhile
   catch /^Vim:Interrupt$/
     let s:activated = 0
-    call coc#rpc#notify('InputChar', [s:current_session(), '<esc>'])
+    call coc#rpc#notify('InputChar', [s:current_session(), '<esc>', 0])
+    let s:session_names = []
+    call s:reset()
     return
   endtry
   let s:activated = 0
@@ -187,7 +195,7 @@ function! s:reset() abort
   if !get(g:, 'coc_disable_transparent_cursor',0)
     " neovim has bug with revert empty &guicursor
     if s:gui && !empty(s:saved_cursor)
-      if has('nvim-0.5.0')
+      if has('nvim')
         set guicursor+=a:ver1-Cursor/lCursor
         let &guicursor = s:saved_cursor
       endif

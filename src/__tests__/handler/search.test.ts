@@ -1,6 +1,6 @@
-import { Neovim } from '@chemzqm/neovim'
+import { Neovim } from '../../neovim'
 import Refactor from '../../handler/refactor'
-import Search, { getPathFromArgs } from '../../handler/search'
+import Search, { getPathFromArgs } from '../../handler/refactor/search'
 import helper from '../helper'
 import path from 'path'
 
@@ -60,7 +60,7 @@ describe('search', () => {
 
   it('should work with CocAction search', async () => {
     await helper.doAction('search', ['CocAction'])
-    let bufnr = await nvim.call('bufnr', ['%'])
+    let bufnr = await nvim.call('bufnr', ['%']) as number
     let buf = refactor.getBuffer(bufnr)
     expect(buf).toBeDefined()
   })
@@ -81,7 +81,7 @@ describe('search', () => {
 
   it('should show empty result when no result found', async () => {
     await helper.doAction('search', ['should found ' + ' no result'])
-    let bufnr = await nvim.call('bufnr', ['%'])
+    let bufnr = await nvim.call('bufnr', ['%']) as number
     let buf = refactor.getBuffer(bufnr)
     expect(buf).toBeDefined()
     let buffer = await nvim.buffer
@@ -89,7 +89,7 @@ describe('search', () => {
     expect(lines[1]).toMatch(/No match found/)
   })
 
-  it('should use corrent search folder for rg', async () => {
+  it('should use current search folder for rg', async () => {
     let search = new Search(nvim, 'rg')
     await helper.createDocument()
     let buf = await refactor.createRefactorBuffer()

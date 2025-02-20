@@ -1,3 +1,4 @@
+'use strict'
 export class Mutex {
   private tasks: (() => void)[] = []
   private count = 1
@@ -8,6 +9,11 @@ export class Mutex {
       let next = this.tasks.shift()
       next()
     }
+  }
+
+  public reset(): void {
+    this.tasks = []
+    this.count = 1
   }
 
   public get busy(): boolean {

@@ -1,8 +1,9 @@
-import { Neovim } from '@chemzqm/neovim'
-import { Disposable, Position, Range, TextEdit } from 'vscode-languageserver-protocol'
+import { Neovim } from '../../neovim'
+import { CancellationToken, Disposable, Position, Range, TextEdit } from 'vscode-languageserver-protocol'
 import SelectionRange from '../../handler/selectionRange'
 import languages from '../../languages'
 import workspace from '../../workspace'
+import window from '../../window'
 import { disposeAll } from '../../util'
 import helper from '../helper'
 
@@ -23,21 +24,16 @@ afterAll(async () => {
 afterEach(async () => {
   await helper.reset()
   disposeAll(disposables)
-  disposables = []
 })
 
 describe('selectionRange', () => {
   describe('getSelectionRanges()', () => {
-    it('should throw error when selectionRange provider not exists', async () => {
+    it('should throw error when selectionRange provider does not exist', async () => {
       let doc = await helper.createDocument()
       await doc.synchronize()
-      let err
-      try {
-        await selection.getSelectionRanges()
-      } catch (e) {
-        err = e
-      }
-      expect(err).toBeDefined()
+      await expect(async () => {
+        await helper.doAction('selectionRanges')
+      }).rejects.toThrow(Error)
     })
 
     it('should return ranges', async () => {
@@ -59,18 +55,38 @@ describe('selectionRange', () => {
     async function getSelectedRange(): Promise<Range> {
       let m = await nvim.mode
       expect(m.mode).toBe('v')
-      let bufnr = await nvim.call('bufnr', ['%'])
       await nvim.input('<esc>')
-      let doc = workspace.getDocument(bufnr)
-      let res = await workspace.getSelectedRange('v', doc)
+      let res = await window.getSelectedRange('v')
       return res
     }
+
+    it('should not select with empty ranges', async () => {
+      let doc = await helper.createDocument()
+      disposables.push(languages.registerSelectionRangeProvider([{ language: '*' }], {
+        provideSelectionRanges: () => []
+      }))
+      await doc.synchronize()
+      let res = await selection.selectRange('', true)
+      expect(res).toBe(false)
+    })
+
+    it('should select single range', async () => {
+      let doc = await helper.createDocument()
+      await doc.applyEdits([TextEdit.insert(Position.create(0, 0), 'foo\nbar\ntest\n')])
+      disposables.push(languages.registerSelectionRangeProvider([{ language: '*' }], {
+        provideSelectionRanges: () => [{ range: Range.create(0, 0, 0, 3) }]
+      }))
+      await doc.synchronize()
+      let res = await selection.selectRange('', true)
+      expect(res).toBe(true)
+    })
 
     it('should select ranges forward', async () => {
       let doc = await helper.createDocument()
       let called = 0
       await doc.applyEdits([TextEdit.insert(Position.create(0, 0), 'foo\nbar\ntest\n')])
       await nvim.call('cursor', [1, 1])
+      await doc.synchronize()
       disposables.push(languages.registerSelectionRangeProvider([{ language: '*' }], {
         provideSelectionRanges: _doc => {
           called += 1
@@ -85,7 +101,7 @@ describe('selectionRange', () => {
         }
       }))
       await doc.synchronize()
-      await selection.selectRange('', false)
+      await helper.doAction('rangeSelect', '', false)
       await selection.selectRange('', true)
       expect(called).toBe(1)
       let res = await getSelectedRange()
@@ -125,7 +141,7 @@ describe('selectionRange', () => {
       let mode = await nvim.call('mode')
       expect(mode).toBe('v')
       await nvim.input('<esc>')
-      await workspace.selectRange(Range.create(0, 0, 1, 3))
+      await window.selectRange(Range.create(0, 0, 1, 3))
       await nvim.input('<esc>')
       await selection.selectRange('v', false)
       let r = await getSelectedRange()
@@ -138,6 +154,54 @@ describe('selectionRange', () => {
       await selection.selectRange('v', false)
       mode = await nvim.call('mode')
       expect(mode).toBe('n')
+    })
+  })
+
+  describe('provideSelectionRanges()', () => {
+    it('should return null when no provider available', async () => {
+      let doc = await workspace.document
+      let res = await languages.getSelectionRanges(doc.textDocument, [Position.create(0, 0)], CancellationToken.None)
+      expect(res).toBeNull()
+    })
+
+    it('should return null when no result available', async () => {
+      disposables.push(languages.registerSelectionRangeProvider([{ language: '*' }], {
+        provideSelectionRanges: _doc => {
+          return []
+        }
+      }))
+      let doc = await workspace.document
+      let res = await languages.getSelectionRanges(doc.textDocument, [Position.create(0, 0)], CancellationToken.None)
+      expect(res).toBeNull()
+    })
+
+    it('should append/prepend selection ranges', async () => {
+      let doc = await workspace.document
+      disposables.push(languages.registerSelectionRangeProvider([{ language: '*' }], {
+        provideSelectionRanges: _doc => {
+          return [{ range: Range.create(1, 1, 1, 4) }, { range: Range.create(1, 0, 1, 6) }]
+        }
+      }))
+      disposables.push(languages.registerSelectionRangeProvider([{ language: '*' }], {
+        provideSelectionRanges: _doc => {
+          return [{ range: Range.create(1, 2, 1, 3) }]
+        }
+      }))
+      disposables.push(languages.registerSelectionRangeProvider([{ language: '*' }], {
+        provideSelectionRanges: _doc => {
+          return [{ range: Range.create(1, 2, 1, 3) }]
+        }
+      }))
+      disposables.push(languages.registerSelectionRangeProvider([{ language: '*' }], {
+        provideSelectionRanges: _doc => {
+          return [{ range: Range.create(0, 0, 3, 0) }]
+        }
+      }))
+
+      let res = await languages.getSelectionRanges(doc.textDocument, [Position.create(0, 0)], CancellationToken.None)
+      expect(res.length).toBe(4)
+      expect(res[0].range).toEqual(Range.create(1, 2, 1, 3))
+      expect(res[3].range).toEqual(Range.create(0, 0, 3, 0))
     })
   })
 })

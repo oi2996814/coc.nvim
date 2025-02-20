@@ -1,21 +1,10 @@
-/* --------------------------------------------------------------------------------------------
- * Copyright (c) Microsoft Corporation. All rights reserved.
- * Licensed under the MIT License. See License.txt in the project root for license information.
- * ------------------------------------------------------------------------------------------ */
 'use strict'
-
-import { CancellationToken, ClientCapabilities, Disposable, DocumentSelector, Position, SelectionRange, SelectionRangeClientCapabilities, SelectionRangeOptions, SelectionRangeParams, SelectionRangeRegistrationOptions, SelectionRangeRequest, ServerCapabilities } from 'vscode-languageserver-protocol'
+import type { CancellationToken, ClientCapabilities, Disposable, DocumentSelector, Position, SelectionRange, SelectionRangeClientCapabilities, SelectionRangeOptions, SelectionRangeParams, SelectionRangeRegistrationOptions, ServerCapabilities } from 'vscode-languageserver-protocol'
 import { TextDocument } from 'vscode-languageserver-textdocument'
 import languages from '../languages'
 import { ProviderResult, SelectionRangeProvider } from '../provider'
-import { BaseLanguageClient, TextDocumentFeature } from './client'
-
-function ensure<T, K extends keyof T>(target: T, key: K): T[K] {
-  if (target[key] === void 0) {
-    target[key] = {} as any
-  }
-  return target[key]
-}
+import { SelectionRangeRequest } from '../util/protocol'
+import { ensure, FeatureClient, TextDocumentLanguageFeature } from './features'
 
 export interface ProvideSelectionRangeSignature {
   (this: void, document: TextDocument, positions: Position[], token: CancellationToken): ProviderResult<SelectionRange[]>
@@ -25,8 +14,8 @@ export interface SelectionRangeProviderMiddleware {
   provideSelectionRanges?: (this: void, document: TextDocument, positions: Position[], token: CancellationToken, next: ProvideSelectionRangeSignature) => ProviderResult<SelectionRange[]>
 }
 
-export class SelectionRangeFeature extends TextDocumentFeature<boolean | SelectionRangeOptions, SelectionRangeRegistrationOptions, SelectionRangeProvider> {
-  constructor(client: BaseLanguageClient) {
+export class SelectionRangeFeature extends TextDocumentLanguageFeature<boolean | SelectionRangeOptions, SelectionRangeRegistrationOptions, SelectionRangeProvider, SelectionRangeProviderMiddleware> {
+  constructor(client: FeatureClient<SelectionRangeProviderMiddleware>) {
     super(client, SelectionRangeRequest.type)
   }
 
@@ -49,17 +38,12 @@ export class SelectionRangeFeature extends TextDocumentFeature<boolean | Selecti
         const client = this._client
         const provideSelectionRanges: ProvideSelectionRangeSignature = (document, positions, token) => {
           const requestParams: SelectionRangeParams = {
-            textDocument: { uri: document.uri },
+            textDocument: client.code2ProtocolConverter.asTextDocumentIdentifier(document),
             positions
           }
-          return client.sendRequest(SelectionRangeRequest.type, requestParams, token).then(
-            ranges => ranges,
-            (error: any) => {
-              return client.handleFailedRequest(SelectionRangeRequest.type, token, error, null)
-            }
-          )
+          return this.sendRequest(SelectionRangeRequest.type, requestParams, token)
         }
-        const middleware = client.clientOptions.middleware
+        const middleware = client.middleware
         return middleware.provideSelectionRanges
           ? middleware.provideSelectionRanges(document, positions, token, provideSelectionRanges)
           : provideSelectionRanges(document, positions, token)
